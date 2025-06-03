@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # bot.py
 
 import os
@@ -5,19 +6,32 @@ import logging
 from flask import Flask, request
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ParseMode
 from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, CallbackContext
+
 from hianimez_scraper import search_anime, get_episodes_list, extract_episode_stream_and_subtitle
 from utils import download_and_rename_subtitle
 
-# 1) Read the token from the environment
+# ——————————————————————————————————————————————————————————————
+# 1) Read required environment variables
+# ——————————————————————————————————————————————————————————————
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", None)
 if not TELEGRAM_TOKEN:
     raise RuntimeError("TELEGRAM_TOKEN environment variable is not set")
 
-# 2) Create Bot & Dispatcher
-bot = Bot(token=TELEGRAM_TOKEN)
-dispatcher = Dispatcher(bot, None, workers=0, use_context=True)
+KOYEB_APP_URL = os.getenv("KOYEB_APP_URL", None)
+if not KOYEB_APP_URL:
+    raise RuntimeError("KOYEB_APP_URL environment variable is not set. It should be your public HTTPS URL.")
 
-# 3) Handlers
+# ——————————————————————————————————————————————————————————————
+# 2) Set up Bot and Dispatcher with worker threads
+# ——————————————————————————————————————————————————————————————
+bot = Bot(token=TELEGRAM_TOKEN)
+# Give the dispatcher several worker threads so that long‐running tasks
+# (e.g. the Playwright rendering) happen in the background without blocking Flask.
+dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
+
+# ——————————————————————————————————————————————————————————————
+# 3) Command and callback handler functions
+# ——————————————————————————————————————————————————————————————
 def start(update: Update, context: CallbackContext):
     update.message.reply_text(
         "👋 Hello! I can help you search for anime on hianimez.to "
@@ -69,9 +83,7 @@ def anime_callback(update: Update, context: CallbackContext):
 
     buttons = []
     for ep_num, ep_url in episodes:
-        buttons.append(
-            [InlineKeyboardButton(f"Episode {ep_num}", callback_data=f"episode|{ep_num}|{ep_url}")]
-        )
+        buttons.append([InlineKeyboardButton(f"Episode {ep_num}", callback_data=f"episode|{ep_num}|{ep_url}")])
 
     reply_markup = InlineKeyboardMarkup(buttons)
     query.edit_message_text("Select an episode:", reply_markup=reply_markup)
@@ -81,7 +93,6 @@ def episode_callback(update: Update, context: CallbackContext):
     query.answer()
 
     _, ep_num, ep_url = query.data.split("|", maxsplit=2)
-
     msg = query.edit_message_text(
         f"🔄 Retrieving SUB HD-2 (1080p) link and English subtitle for Episode {ep_num}…"
     )
@@ -139,19 +150,21 @@ def error_handler(update: object, context: CallbackContext):
     if isinstance(update, Update) and update.callback_query:
         update.callback_query.message.reply_text("⚠️ Oops, something went wrong.")
 
-# Register handlers with the dispatcher
+# Register handlers
 dispatcher.add_handler(CommandHandler("start", start))
 dispatcher.add_handler(CommandHandler("search", search_command))
 dispatcher.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime:"))
 dispatcher.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode\|"))
 dispatcher.add_error_handler(error_handler)
 
-# 4) Flask app to receive webhooks & run the health check on port 8080
+# ——————————————————————————————————————————————————————————————
+# 4) Flask app to receive webhooks & serve health checks
+# ——————————————————————————————————————————————————————————————
 app = Flask(__name__)
 
 @app.route("/webhook", methods=["POST"])
 def webhook_handler():
-    """Receive POST from Telegram, convert to Update, and let dispatcher process it."""
+    """Receive Telegram update via POST, convert to `Update`, and dispatch it."""
     data = request.get_json(force=True)
     update = Update.de_json(data, bot)
     dispatcher.process_update(update)
@@ -159,23 +172,23 @@ def webhook_handler():
 
 @app.route("/", methods=["GET"])
 def health_check():
-    """Simple health check endpoint for Koyeb on port 8080."""
+    """Simple health check so Koyeb’s TCP 8080 probe passes."""
     return "OK", 200
 
+# ——————————————————————————————————————————————————————————————
+# 5) On startup, set the Telegram webhook to <KOYEB_APP_URL>/webhook
+# ——————————————————————————————————————————————————————————————
 if __name__ == "__main__":
-    # 5) On startup, set the webhook to your Koyeb domain + '/webhook'
-    # For example, if your Koyeb service is reachable at https://mybot-service.koyeb.app,
-    # then your webhook URL is "https://mybot-service.koyeb.app/webhook".
-    #
-    # Replace <your-koyeb-domain> below with the actual Koyeb domain.
-    #
-    KOYEB_APP_URL = os.getenv("KOYEB_APP_URL", None)
-    if not KOYEB_APP_URL:
-        raise RuntimeError("KOYEB_APP_URL environment variable is not set. It should be your public HTTPS URL.")
-
     webhook_url = f"{KOYEB_APP_URL}/webhook"
-    bot.set_webhook(webhook_url)
+    try:
+        bot.set_webhook(webhook_url)
+        logging.info(f"Successfully set webhook to {webhook_url}")
+    except Exception as ex:
+        logging.error(f"Failed to set webhook: {ex}", exc_info=True)
+        raise
 
-    # Start Flask (which listens on port 8080)
+    # Make sure the subtitle cache directory exists
+    os.makedirs("subtitles_cache", exist_ok=True)
+
     logging.info("Starting Flask server (health check + webhook) on port 8080…")
     app.run(host="0.0.0.0", port=8080)
