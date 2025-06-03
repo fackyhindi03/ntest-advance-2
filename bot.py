@@ -30,7 +30,7 @@ from hianimez_scraper import (
 from utils import download_and_rename_subtitle
 
 # -------------- EDIT THIS: Insert your own Bot Token --------------
-TELEGRAM_TOKEN = "YOUR-BOT-TOKEN-HERE"
+TELEGRAM_TOKEN = "7882374719:AAEHv5HTsdH2DvwW_goG8W_JdNv1pmxpSkY"
 # -------------------------------------------------------------------
 
 # Configure logging
