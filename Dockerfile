@@ -1,32 +1,26 @@
-# Use an official Python runtime as a parent image.
-# You can choose 3.9, 3.10, 3.11, etc. 3.10-slim is a good balance.
+# 1) Start from an official slim‐Python base image
 FROM python:3.10-slim
 
-# ---- 1) Set environment variables ----
-# Prevent Python from writing .pyc files to disk
+# 2) Prevent Python from writing .pyc files and force unbuffered output
 ENV PYTHONDONTWRITEBYTECODE=1
-# Ensure Python output is sent straight to the terminal (no buffering)
 ENV PYTHONUNBUFFERED=1
 
-# ---- 2) Create a working directory ----
+# 3) Create and switch to /app
 WORKDIR /app
 
-# ---- 3) Copy requirements.txt and install dependencies ----
-# Copy requirements.txt first to leverage Docker layer caching.
+# 4) Copy requirements.txt first (to leverage Docker’s layer cache)
 COPY requirements.txt .
 
-# Install required Python packages
-RUN pip install --no‐cache‐dir -r requirements.txt
+# 5) Install Python dependencies using ASCII hyphens
+RUN pip install --no-cache-dir -r requirements.txt
 
-# ---- 4) Copy the rest of your source code ----
+# 6) Copy the rest of your application code
 COPY bot.py .
 COPY hianimez_scraper.py .
 COPY utils.py .
 
-# If you have a subtitles_cache folder in your .gitignore, we don't need to copy it.
-# The bot will create it at runtime if necessary.
+# 7) Ensure the subtitles_cache directory will exist at runtime
+RUN mkdir -p /app/subtitles_cache
 
-# ---- 5) Set the default command to run the bot ----
-# You must supply your TELEGRAM_TOKEN via an environment variable when you deploy.
-# (Alternatively, you can hard‐code it in bot.py, but ENV is more secure.)
+# 8) Tell Docker how to run your bot
 CMD ["python", "bot.py"]
