@@ -1,9 +1,3 @@
-
----
-
-## 4. `bot.py`
-
-```python
 #!/usr/bin/env python3
 # bot.py
 
@@ -29,9 +23,10 @@ from hianimez_scraper import (
 )
 from utils import download_and_rename_subtitle
 
-# -------------- EDIT THIS: Insert your own Bot Token --------------
-TELEGRAM_TOKEN = "7882374719:AAEHv5HTsdH2DvwW_goG8W_JdNv1pmxpSkY"
-# -------------------------------------------------------------------
+# Read the token from the environment (do NOT hard-code it here)
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", None)
+if not TELEGRAM_TOKEN:
+    raise RuntimeError("TELEGRAM_TOKEN environment variable is not set")
 
 # Configure logging
 logging.basicConfig(
@@ -71,7 +66,8 @@ def search_command(update: Update, context: CallbackContext):
     # Build inline keyboard of anime buttons
     buttons = []
     for title, anime_url, anime_id in results:
-        buttons.append([InlineKeyboardButton(title, callback_data=f"anime:{anime_id}")])
+        # We use the full anime_url as callback_data so that our callback can fetch episodes
+        buttons.append([InlineKeyboardButton(title, callback_data=f"anime:{anime_url}")])
 
     reply_markup = InlineKeyboardMarkup(buttons)
     msg.edit_text("Select the anime you want:", reply_markup=reply_markup)
@@ -82,15 +78,9 @@ def anime_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
-    data = query.data  # e.g. "anime:12345"
-    _, anime_id = data.split(":")
-    # We must reconstruct the anime URL from anime_id. For simplicity, anime_id is actually the full anime-page URL base64 encoded or something.
-    # In our scraper implementation, we used anime_id = base‐62/slug. To keep it simple, let's just store the full URL in the callback_data.
-    # For example, callback_data = f"anime_url|{anime_url}"
-    # Here though, let's assume anime_id IS actually the full anime_page_url.
-    anime_url = anime_id
+    # callback_data format: "anime:<anime_url>"
+    _, anime_url = query.data.split(":", maxsplit=1)
 
-    # Fetch episodes list
     try:
         episodes = get_episodes_list(anime_url)
     except Exception as e:
@@ -105,7 +95,7 @@ def anime_callback(update: Update, context: CallbackContext):
     # Build buttons for each episode
     buttons = []
     for ep_num, ep_url in episodes:
-        # We pass `ep_url` as callback data. But to keep callback_data < 64 bytes, we can URI‐encode it.
+        # callback_data: "episode|<ep_num>|<ep_url>"
         buttons.append(
             [
                 InlineKeyboardButton(
@@ -123,7 +113,7 @@ def episode_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
-    # callback_data format: "episode|<ep_num>|<ep_url>"
+    # callback_data: "episode|<ep_num>|<ep_url>"
     _, ep_num, ep_url = query.data.split("|", maxsplit=2)
 
     msg = query.edit_message_text(
@@ -160,7 +150,6 @@ def episode_callback(update: Update, context: CallbackContext):
         )
     except Exception as e:
         logger.error(f"Error downloading/renaming subtitle: {e}")
-        # Still send the HLS link, but warn that subtitle failed
         text += "⚠️ Found an English subtitle URL but failed to download it."
         query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
         return
@@ -169,14 +158,14 @@ def episode_callback(update: Update, context: CallbackContext):
     text += f"✅ English subtitle downloaded and renamed to `Episode {ep_num}.vtt`."
     query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
 
-    # Actually send the .vtt file as a document
+    # Send the .vtt file as a document
     with open(local_vtt_path, "rb") as f:
         query.message.reply_document(
             document=InputFile(f, filename=f"Episode {ep_num}.vtt"),
             caption=f"Here is the subtitle for Episode {ep_num}.",
         )
 
-    # Optionally, delete the cached file
+    # Clean up the cached subtitle
     try:
         os.remove(local_vtt_path)
     except OSError:
