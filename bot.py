@@ -1,30 +1,11 @@
-#!/usr/bin/env python3
 # bot.py
 
-import logging
 import os
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    InputFile,
-    ParseMode,
-)
-from telegram.ext import (
-    Updater,
-    CommandHandler,
-    CallbackQueryHandler,
-    CallbackContext,
-)
-
-from hianimez_scraper import (
-    search_anime,
-    get_episodes_list,
-    extract_episode_stream_and_subtitle,
-)
+import logging
+from flask import Flask, request
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ParseMode
+from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, CallbackContext
+from hianimez_scraper import search_anime, get_episodes_list, extract_episode_stream_and_subtitle
 from utils import download_and_rename_subtitle
 
 # 1) Read the token from the environment
@@ -32,19 +13,11 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", None)
 if not TELEGRAM_TOKEN:
     raise RuntimeError("TELEGRAM_TOKEN environment variable is not set")
 
+# 2) Create Bot & Dispatcher
+bot = Bot(token=TELEGRAM_TOKEN)
+dispatcher = Dispatcher(bot, None, workers=0, use_context=True)
 
-# 2) Tiny HTTP health server (for “Web Service” in Koyeb)
-def run_health_server():
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"OK")
-
-    server = HTTPServer(("", 8080), Handler)
-    server.serve_forever()
-
-
+# 3) Handlers
 def start(update: Update, context: CallbackContext):
     update.message.reply_text(
         "👋 Hello! I can help you search for anime on hianimez.to "
@@ -52,14 +25,13 @@ def start(update: Update, context: CallbackContext):
         "Use /search <anime name> to begin."
     )
 
-
 def search_command(update: Update, context: CallbackContext):
     if len(context.args) == 0:
         update.message.reply_text("Please provide an anime name. Example: /search Naruto")
         return
 
     query = " ".join(context.args).strip()
-    msg = update.message.reply_text(f"🔍 Searching for \"{query}\" ...")
+    msg = update.message.reply_text(f"🔍 Searching for \"{query}\" …")
 
     try:
         results = search_anime(query)
@@ -78,7 +50,6 @@ def search_command(update: Update, context: CallbackContext):
 
     reply_markup = InlineKeyboardMarkup(buttons)
     msg.edit_text("Select the anime you want:", reply_markup=reply_markup)
-
 
 def anime_callback(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -105,7 +76,6 @@ def anime_callback(update: Update, context: CallbackContext):
     reply_markup = InlineKeyboardMarkup(buttons)
     query.edit_message_text("Select an episode:", reply_markup=reply_markup)
 
-
 def episode_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
@@ -113,7 +83,7 @@ def episode_callback(update: Update, context: CallbackContext):
     _, ep_num, ep_url = query.data.split("|", maxsplit=2)
 
     msg = query.edit_message_text(
-        f"🔄 Retrieving SUB HD-2 (1080p) link and English subtitle for Episode {ep_num}..."
+        f"🔄 Retrieving SUB HD-2 (1080p) link and English subtitle for Episode {ep_num}…"
     )
 
     try:
@@ -164,35 +134,48 @@ def episode_callback(update: Update, context: CallbackContext):
     except OSError:
         pass
 
-
 def error_handler(update: object, context: CallbackContext):
-    logging.error(msg="Exception while handling an update:", exc_info=context.error)
+    logging.error("Exception while handling an update:", exc_info=context.error)
     if isinstance(update, Update) and update.callback_query:
         update.callback_query.message.reply_text("⚠️ Oops, something went wrong.")
 
+# Register handlers with the dispatcher
+dispatcher.add_handler(CommandHandler("start", start))
+dispatcher.add_handler(CommandHandler("search", search_command))
+dispatcher.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime:"))
+dispatcher.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode\|"))
+dispatcher.add_error_handler(error_handler)
 
-def main():
-    os.makedirs("subtitles_cache", exist_ok=True)
+# 4) Flask app to receive webhooks & run the health check on port 8080
+app = Flask(__name__)
 
-    # Launch health server in background (only if using “Web Service”)
-    t = threading.Thread(target=run_health_server, daemon=True)
-    t.start()
+@app.route("/webhook", methods=["POST"])
+def webhook_handler():
+    """Receive POST from Telegram, convert to Update, and let dispatcher process it."""
+    data = request.get_json(force=True)
+    update = Update.de_json(data, bot)
+    dispatcher.process_update(update)
+    return "OK", 200
 
-    updater = Updater(TELEGRAM_TOKEN, use_context=True)
-    dp = updater.dispatcher
-
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("search", search_command))
-
-    dp.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime:"))
-    dp.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode\|"))
-
-    dp.add_error_handler(error_handler)
-
-    logging.info("Bot started…")
-    updater.start_polling()
-    updater.idle()
-
+@app.route("/", methods=["GET"])
+def health_check():
+    """Simple health check endpoint for Koyeb on port 8080."""
+    return "OK", 200
 
 if __name__ == "__main__":
-    main()
+    # 5) On startup, set the webhook to your Koyeb domain + '/webhook'
+    # For example, if your Koyeb service is reachable at https://mybot-service.koyeb.app,
+    # then your webhook URL is "https://mybot-service.koyeb.app/webhook".
+    #
+    # Replace <your-koyeb-domain> below with the actual Koyeb domain.
+    #
+    KOYEB_APP_URL = os.getenv("KOYEB_APP_URL", None)
+    if not KOYEB_APP_URL:
+        raise RuntimeError("KOYEB_APP_URL environment variable is not set. It should be your public HTTPS URL.")
+
+    webhook_url = f"{KOYEB_APP_URL}/webhook"
+    bot.set_webhook(webhook_url)
+
+    # Start Flask (which listens on port 8080)
+    logging.info("Starting Flask server (health check + webhook) on port 8080…")
+    app.run(host="0.0.0.0", port=8080)
