@@ -322,11 +322,11 @@ async def telethon_send_with_progress(chat_id: int, file_path: str, caption: str
             elapsed_str = f"{int(elapsed//60)}m {int(elapsed%60)}s"
             text = (
                 "📤 Uploading File\n"
-                f"Size: {uploaded_mb:.2f} MB of {total_mb:.2f} MB\n"
-                f"Speed: {speed:.2f} MB/s\n"
-                f"Time Elapsed: {elapsed_str}\n"
-                f"ETA: {eta_str}\n"
-                f"Progress: {percent:.1f}%"
+                f"📊Size: {uploaded_mb:.2f} MB of {total_mb:.2f} MB\n"
+                f"⚡️Speed: {speed:.2f} MB/s\n"
+                f"⏱️Time Elapsed: {elapsed_str}\n"
+                f"⏳ETA: {eta_str}\n"
+                f"📈Progress: {percent:.1f}%"
             )
             # Edit the existing status message
             try:
@@ -407,11 +407,12 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
 
         text = (
             "📥 Downloading File\n"
-            f"Size: {downloaded_mb:.2f} MB\n"
-            f"Speed: {speed_mb_s:.2f} MB/s\n"
-            f"Time Elapsed: {elapsed_str}\n"
-            f"ETA: {eta_str}\n"
-            f"Progress: {percent:.1f}%"
+            
+            f"📊Size: {downloaded_mb:.2f} MB\n"
+            f"⚡️Speed: {speed_mb_s:.2f} MB/s\n"
+            f"⏱️Time Elapsed: {elapsed_str}\n"
+            f"⏳ETA: {eta_str}\n"
+            f"📈Progress: {percent:.1f}%"
         )
         try:
             bot.edit_message_text(text, chat_id=chat_id, message_id=status_download.message_id)
@@ -467,7 +468,7 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         send_file_via_telethon_with_progress(
             chat_id=chat_id,
             file_path=raw_mp4,
-            caption=f"Episode {ep_num}.mp4 (Full quality)",
+            caption=f"Episode {ep_num}.mp4",
             status_message_id=status_upload.message_id
         )
     except Exception as e:
@@ -585,6 +586,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
             eta_str = f"{int(eta_s//60)}m {int(eta_s%60)}s" if (eta_s is not None and eta_s >= 0) else "–"
             text = (
                 f"📥 Downloading Episode {ep_num}\n"
+                
                 f"Size: {downloaded_mb:.2f} MB\n"
                 f"Speed: {speed_mb_s:.2f} MB/s\n"
                 f"Time Elapsed: {elapsed_str}\n"
@@ -643,7 +645,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
             send_file_via_telethon_with_progress(
                 chat_id=chat_id,
                 file_path=raw_mp4,
-                caption=f"Episode {ep_num}.mp4 (Full quality)",
+                caption=f"Episode {ep_num}.mp4",
                 status_message_id=status_upload.message_id
             )
         except Exception as e:
