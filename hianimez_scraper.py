@@ -1,144 +1,87 @@
-# hianimez_scraper.py
-
+import os
+import requests
 import re
-import asyncio
-from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright
-import cloudscraper
-from urllib.parse import quote_plus
 
-# ——————————————————————————————————————————————————————————————
-# 1) PLAYWRIGHT‐BASED “SEARCH BY NAME”
-# ——————————————————————————————————————————————————————————————
-async def _fetch_search_page_html(encoded_query: str) -> str:
-    url = f"https://hianimez.to/search?keyword={encoded_query}"
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(args=["--no-sandbox"])
-        page = await browser.new_page()
-        await page.goto(url, timeout=30000)
-        try:
-            await page.wait_for_selector("div.film-poster", timeout=15000)
-        except:
-            pass
-        html = await page.content()
-        await browser.close()
-        return html
-
-def _rendered_search_html(query: str) -> str:
-    encoded = quote_plus(query)
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(_fetch_search_page_html(encoded))
-    finally:
-        loop.close()
+ANIWATCH_API_BASE = os.getenv("ANIWATCH_API_BASE", "http://localhost:4000/api/v2/hianime")
 
 def search_anime(query: str):
-    """
-    Returns a list of (title, anime_url, anime_url) for all matching anime.
-    anime_url is e.g. https://hianimez.to/watch/naruto
-    """
-    html = _rendered_search_html(query)
-    soup = BeautifulSoup(html, "lxml")
+    params = {"q": query, "page": 1}
+    url = f"{ANIWATCH_API_BASE}/search"
+    resp = requests.get(url, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json().get("data", [])
     results = []
-    container = soup.find("div", class_="film-list-wrap")
-    if not container:
-        return results
-
-    for poster_div in container.select("div.film-poster"):
-        a_tag = poster_div.find("a", href=True)
-        if not a_tag:
+    for item in data:
+        title = item.get("name") or item.get("title") or item.get("slug", "")
+        slug = item.get("slug", "")
+        if not slug:
             continue
-        rel_link = a_tag["href"].strip()
-        anime_url = "https://hianimez.to" + rel_link
-        detail_div = poster_div.find_next_sibling("div", class_="film-detail")
-        if detail_div:
-            name_tag = detail_div.find("h3", class_="name")
-            title = name_tag.a.get_text(strip=True) if (name_tag and name_tag.a) else a_tag.get("title", "").strip()
-        else:
-            title = a_tag.get("title", "").strip()
-        if title and anime_url:
-            results.append((title, anime_url, anime_url))
+        anime_url = f"https://hianimez.to/watch/{slug}"
+        results.append((title, anime_url, slug))
     return results
 
-# ——————————————————————————————————————————————————————————————
-# 2) PLAYWRIGHT‐BASED “GET EPISODE LIST”
-# ——————————————————————————————————————————————————————————————
-async def _fetch_episodes_html(url: str) -> str:
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(args=["--no-sandbox"])
-        page = await browser.new_page()
-        await page.goto(url, timeout=30000)
-        try:
-            await page.wait_for_selector("ul.episodes", timeout=15000)
-        except:
-            pass
-        html = await page.content()
-        await browser.close()
-        return html
-
 def get_episodes_list(anime_url: str):
-    """
-    Returns a sorted list of (ep_num, ep_url).
-    ep_url is e.g. https://hianimez.to/watch/naruto-episode-1
-    """
-    loop = asyncio.new_event_loop()
     try:
-        html = loop.run_until_complete(_fetch_episodes_html(anime_url))
-    finally:
-        loop.close()
+        slug = anime_url.rstrip("/").split("/")[-1]
+    except Exception:
+        return []
 
-    soup = BeautifulSoup(html, "lxml")
+    url = f"{ANIWATCH_API_BASE}/episode/list"
+    params = {"animeId": slug}
+    resp = requests.get(url, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json().get("data", [])
+
     episodes = []
-    ul = soup.find("ul", class_="episodes")
-    if not ul:
-        ul = soup.find("div", class_="episode-list")
-    if not ul:
-        return episodes
-
-    for a in ul.find_all("a", href=True):
-        text = a.get_text(strip=True)
-        m = re.search(r"Episode\s*(\d+)", text, re.I)
-        if m:
-            ep_num = m.group(1)
-        else:
-            slug = a["href"].rstrip("/").split("-")[-1]
-            ep_num = slug if slug.isdigit() else None
-        if not ep_num:
+    for item in data:
+        ep_num = str(item.get("episode", "")).strip()
+        ep_slug = item.get("slug", "")
+        if not ep_num or not ep_slug:
             continue
-        ep_url = "https://hianimez.to" + a["href"]
+        ep_url = f"https://hianimez.to/watch/{ep_slug}"
         episodes.append((ep_num, ep_url))
 
     episodes.sort(key=lambda x: int(x[0]))
     return episodes
 
-# ——————————————————————————————————————————————————————————————
-# 3) “EXTRACT HD-2 (1080p) + ENGLISH SUBTITLE” via regex + cloudscraper
-# ——————————————————————————————————————————————————————————————
 def extract_episode_stream_and_subtitle(episode_url: str):
-    """
-    Returns (hls_1080p_url, english_vtt_url) or (None, None).
-    """
-    scraper = cloudscraper.create_scraper({
-        "headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/115.0 Safari/537.36"
-            )
-        }
-    })
-    resp = scraper.get(episode_url, timeout=20)
+    try:
+        path = episode_url.rstrip("/").split("/")[-1]
+        if "-episode-" in path:
+            anime_slug, ep_num = path.split("-episode-", maxsplit=1)
+            ep_id = f"{anime_slug}?ep={ep_num}"
+        else:
+            ep_id = path
+    except Exception:
+        return None, None
+
+    url = f"{ANIWATCH_API_BASE}/episode/sources"
+    params = {
+        "animeEpisodeId": ep_id,
+        "server": "hd-1",
+        "category": "sub"
+    }
+    resp = requests.get(url, params=params, timeout=10)
     resp.raise_for_status()
-    html = resp.text
+    data = resp.json().get("data", {})
+    sources = data.get("sources", [])
+    tracks = data.get("tracks", [])
 
     hls_1080p = None
-    m_hls = re.search(r'"label"\s*:\s*"HD-2"\s*,\s*"file"\s*:\s*"([^"]+\.m3u8)"', html)
-    if m_hls:
-        hls_1080p = m_hls.group(1)
+    for s in sources:
+        if s.get("type") == "hls" and s.get("label", "").lower() == "hd-2":
+            hls_1080p = s.get("url")
+            break
+    if not hls_1080p:
+        for s in sources:
+            if s.get("type") == "hls":
+                hls_1080p = s.get("url")
+                break
 
     subtitle_url = None
-    m_sub = re.search(r'"srclang"\s*:\s*"en"\s*,\s*"file"\s*:\s*"([^"]+\.vtt)"', html)
-    if m_sub:
-        subtitle_url = m_sub.group(1)
+    for t in tracks:
+        if t.get("srclang", "").lower() == "en":
+            subtitle_url = t.get("file")
+            break
 
     return hls_1080p, subtitle_url
