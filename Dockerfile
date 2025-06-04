@@ -1,8 +1,8 @@
-# Dockerfile for your “Hianime Telegram Bot” repository
+# Dockerfile
 
 FROM python:3.10-slim
 
-# 1) Install OS‐level dependencies (ffmpeg for HLS→MP4 conversion, plus build libaries for lxml, etc.)
+# 1) System dependencies (ffmpeg + build tools for lxml, etc.)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       ffmpeg \
@@ -14,27 +14,27 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# 2) Prevent .pyc files and force unbuffered stdout
+# 2) Prevent .pyc files, unbuffered output
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# 3) Set working directory
+# 3) Working directory
 WORKDIR /app
 
-# 4) Copy requirements and install Python dependencies
+# 4) Copy & install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 5) Copy application code
 COPY bot.py .
-COPY hianimez_scraper.py .
 COPY utils.py .
+COPY hianimez_scraper.py .
 
-# 6) Create cache folders for subtitles and videos
+# 6) Create cache directories
 RUN mkdir -p /app/subtitles_cache /app/videos_cache
 
-# 7) Expose port 8080 (Flask health check + webhook)
+# 7) Expose port 8080 for Flask
 EXPOSE 8080
 
-# 8) Start the bot
+# 8) Entrypoint
 CMD ["python", "bot.py"]
