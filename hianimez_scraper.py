@@ -11,23 +11,10 @@ ANIWATCH_API_BASE = os.getenv(
     "http://localhost:4000/api/v2/hianime"
 )
 
+
 def search_anime(query: str):
     """
-    Call AniWatch API's /search?q=<query>&page=1.
-    The AniWatch response has the shape:
-      {
-        "status": 200,
-        "data": {
-          "animes": [ { "id": "...", "name": "...", "episodes": {...} }, … ],
-          "mostPopularAnimes": [ … ],
-          "searchQuery": "<your-term>",
-          "totalPages": 3,
-          …
-        }
-      }
-
-    We only care about data["animes"], which is a list of anime objects.
-    Returns a list of (title, anime_url, slug).
+    (unchanged)
     """
     url = f"{ANIWATCH_API_BASE}/search"
     params = {"q": query, "page": 1}
@@ -39,23 +26,10 @@ def search_anime(query: str):
     logger.info("AniWatch /search raw JSON: %s", full_json)
 
     root = full_json.get("data", {})
-    anime_list = root.get("animes", [])   # <<< lowercase "animes"
+    anime_list = root.get("animes", [])
 
     results = []
     for item in anime_list:
-        # Each `item` is a dict like:
-        #   {
-        #     "id": "naruto-677",
-        #     "name": "Naruto",
-        #     "jname": "Naruto",
-        #     "poster": "https://....jpg",
-        #     "duration": "23m",
-        #     "type": "TV",
-        #     "rating": null,
-        #     "episodes": { "sub": 220, "dub": 220 }
-        #   }
-        #
-        # We treat `item["id"]` as the slug for constructing the watch URL.
         if isinstance(item, str):
             slug = item
             title = slug.replace("-", " ").title()
@@ -74,24 +48,34 @@ def search_anime(query: str):
 
 def get_episodes_list(anime_url: str):
     """
-    Given a HiAnime page URL (e.g. "https://hianimez.to/watch/naruto-677"),
-    extract the slug ("naruto-677"), then call:
-      GET /episode/list?animeId=<slug>
-    The AniWatch response is:
-      { "status": 200, "data": [ { "episode": 1, "slug": "naruto-episode-1", … }, … ] }
-    We return a sorted list of (episode_number, episode_url).
+    Given a HiAnime URL (e.g. "https://hianimez.to/watch/naruto-677"), extract the slug ("naruto-677"),
+    then call AniWatch's /episode/list?animeId=<slug>.
+
+    If AniWatch returns 404, treat it as a single‐episode anime, and return [("1", slug)].
+    Otherwise, parse the JSON array and return a sorted list of (episode_number, episode_url).
     """
+    # 1) Extract the slug itself from the URL
     try:
         slug = anime_url.rstrip("/").split("/")[-1]
     except Exception:
         return []
 
-    url = f"{ANIWATCH_API_BASE}/episode/list"
+    ep_list_url = f"{ANIWATCH_API_BASE}/episode/list"
     params = {"animeId": slug}
 
-    resp = requests.get(url, params=params, timeout=10)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(ep_list_url, params=params, timeout=10)
+        resp.raise_for_status()
+    except requests.exceptions.HTTPError as http_err:
+        # If it's a 404, assume "movie"/"OVA"/"special" → single episode
+        if resp.status_code == 404:
+            # Return a single‐episode list: episode "1" maps back to the same slug
+            return [("1", anime_url)]
+        else:
+            # re‐raise for any other HTTP error (e.g. 500)
+            raise
 
+    # 2) If we did get a 200, parse the JSON array under "data"
     episodes_data = resp.json().get("data", [])
     episodes = []
     for item in episodes_data:
@@ -102,23 +86,14 @@ def get_episodes_list(anime_url: str):
         ep_url = f"https://hianimez.to/watch/{ep_slug}"
         episodes.append((ep_num, ep_url))
 
+    # 3) Sort by numeric episode number
     episodes.sort(key=lambda x: int(x[0]))
     return episodes
 
 
 def extract_episode_stream_and_subtitle(episode_url: str):
     """
-    Given a HiAnime episode URL (e.g. "https://hianimez.to/watch/naruto-episode-1"),
-    we compute animeEpisodeId = "<slug>?ep=<n>" and call:
-      GET /episode/sources?animeEpisodeId=<…>&server=hd-1&category=sub
-
-    Response shape:
-      { "status": 200, "data": {
-          "sources": [ { "label": "HD-2", "file": "<m3u8_url>", "type": "hls" }, … ],
-          "tracks": [ { "file": "<vtt_url>", "srclang": "en", … }, … ]
-      } }
-
-    We return (hls_1080p_url, english_vtt_url).
+    (unchanged from before)
     """
     try:
         path = episode_url.rstrip("/").split("/")[-1]
@@ -133,7 +108,7 @@ def extract_episode_stream_and_subtitle(episode_url: str):
     url = f"{ANIWATCH_API_BASE}/episode/sources"
     params = {
         "animeEpisodeId": ep_id,
-        "server": "hd-1",     # SUB server
+        "server": "hd-1",   # “hd-1” is the SUB server
         "category": "sub"
     }
 
@@ -151,7 +126,7 @@ def extract_episode_stream_and_subtitle(episode_url: str):
             hls_1080p = s.get("file")
             break
     if not hls_1080p:
-        # fallback to first HLS
+        # fallback to the first HLS if HD-2 not found
         for s in sources:
             if s.get("type") == "hls":
                 hls_1080p = s.get("file")
