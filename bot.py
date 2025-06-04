@@ -18,9 +18,9 @@ from hianimez_scraper import (
     get_episodes_list,
     extract_episode_stream_and_subtitle,
 )
-from utils import download_and_rename_subtitle
+from utils import download_and_rename_subtitle, download_and_rename_video
 
-# ——————————————————————————————————————————————————————————————
+# ———————————————————————————————————————
 # 1) Load environment variables
 # ——————————————————————————————————————————————————————————————
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -56,17 +56,15 @@ logger = logging.getLogger(__name__)
 search_cache = {}   # chat_id → [ (title, slug), … ]
 episode_cache = {}  # chat_id → [ (ep_num, episode_id), … ]
 
-
 # ——————————————————————————————————————————————————————————————
 # 4) /start handler
 # ——————————————————————————————————————————————————————————————
 def start(update: Update, context: CallbackContext):
     update.message.reply_text(
         "👋 Hello! I can help you search for anime on hianimez.to and\n"
-        " extract the SUB-HD2 Video HLS link + English subtitles.\n\n"
+        " extract the SUB-HD2 Video (as an MP4) + English subtitles.\n\n"
         "Use /search <anime name> to begin."
     )
-
 
 # ——————————————————————————————————————————————————————————————
 # 5) /search handler
@@ -100,7 +98,6 @@ def search_command(update: Update, context: CallbackContext):
 
     reply_markup = InlineKeyboardMarkup(buttons)
     msg.edit_text("Select the anime you want:", reply_markup=reply_markup)
-
 
 # ——————————————————————————————————————————————————————————————
 # 6) Callback when user taps an anime button (anime_idx)
@@ -155,8 +152,7 @@ def anime_callback(update: Update, context: CallbackContext):
     buttons.append([InlineKeyboardButton("Download All", callback_data="episode_all")])
 
     reply_markup = InlineKeyboardMarkup(buttons)
-    query.edit_message_text("Select an episode (or download all):", reply_markup=reply_markup)
-
+    query.edit_message_text("Select an episode (or Download All):", reply_markup=reply_markup)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 7a) Callback when user taps a single episode button (episode_idx)
@@ -182,7 +178,7 @@ def episode_callback(update: Update, context: CallbackContext):
     ep_num, episode_id = ep_list[idx]
     # Let the user know we are working on it:
     msg = query.edit_message_text(
-        f"🔄 Retrieving SUB HD-2 Video link and English subtitle for Episode {ep_num}..."
+        f"🔄 Retrieving SUB-HD2 Video and English subtitle for Episode {ep_num}…"
     )
 
     try:
@@ -194,51 +190,83 @@ def episode_callback(update: Update, context: CallbackContext):
 
     # If we couldn’t find any HLS URL, bail out:
     if not hls_link:
-        query.edit_message_text(f"😔 Could not find a SUB HD-2 Video stream for Episode {ep_num}.")
+        query.edit_message_text(f"😔 Could not find a SUB-HD2 Video stream for Episode {ep_num}.")
         return
 
-    # Build a plain-text response (no MarkdownV2 anywhere)
-    text = (
-        f"🎬 Episode {ep_num}\n\n"
-        f"Video (SUB HD-2) HLS Link:\n"
-        f"{hls_link}\n\n"
-    )
+    # Now: download the actual MP4 from the HLS link
+    try:
+        local_mp4 = download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache")
+    except Exception as e:
+        logger.error(f"Error downloading video: {e}", exc_info=True)
+        query.edit_message_text(f"⚠️ Failed to download video for Episode {ep_num}. Sending HLS link instead.\n\n{hls_link}")
+        # Fall back to just sending the HLS link + subtitle if video download fails:
+        text = (
+            f"🎬 Episode {ep_num}\n\n"
+            f"Video (SUB HD-2) HLS Link:\n{hls_link}\n\n"
+        )
+        if not subtitle_url:
+            text += "❗ No English subtitle (.vtt) found."
+            query.message.reply_text(text)
+            return
+        # If subtitle exists, download & send
+        try:
+            local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
+            text += f"✅ English subtitle downloaded as \"Episode {ep_num}.vtt\"."
+            query.message.reply_text(text)
+            with open(local_vtt, "rb") as f:
+                query.message.reply_document(
+                    document=InputFile(f, filename=f"Episode {ep_num}.vtt"),
+                    caption=f"Here is the subtitle for Episode {ep_num}.",
+                )
+            os.remove(local_vtt)
+        except Exception as se:
+            text += "⚠️ Found a subtitle URL, but failed to download it."
+            query.message.reply_text(text)
+        return
 
-    # If no English .vtt was found, just send the text so far:
+    # If we have the MP4 locally, send it as a Document
+    query.message.reply_text(f"✅ Video for Episode {ep_num} downloaded. Sending now…")
+    try:
+        with open(local_mp4, "rb") as vid_f:
+            query.message.reply_document(
+                document=InputFile(vid_f, filename=f"Episode {ep_num}.mp4"),
+                caption=f"Here is the full video for Episode {ep_num}.",
+            )
+    except Exception as e:
+        logger.error(f"Error sending video file: {e}", exc_info=True)
+        query.message.reply_text(f"⚠️ Could not send the video file for Episode {ep_num}.")
+    finally:
+        # Clean up the local .mp4
+        try:
+            os.remove(local_mp4)
+        except OSError:
+            pass
+
+    # Now: download & send subtitle if it exists
     if not subtitle_url:
-        text += "❗ No English subtitle (.vtt) found."
-        query.message.reply_text(text)
+        query.message.reply_text("❗ No English subtitle (.vtt) found.")
         return
 
-    # Otherwise, attempt to download & rename the .vtt locally
     try:
         local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
     except Exception as e:
         logger.error(f"Error downloading/renaming subtitle: {e}", exc_info=True)
-        text += "⚠️ Found a subtitle URL, but failed to download it."
-        query.message.reply_text(text)
+        query.message.reply_text("⚠️ Found a subtitle URL, but failed to download it.")
         return
 
-    # Indicate that subtitle was downloaded
-    text += f"✅ English subtitle downloaded as \"Episode {ep_num}.vtt\"."
-    query.message.reply_text(text)
-
-    # Send the .vtt file
+    query.message.reply_text(f"✅ English subtitle downloaded as \"Episode {ep_num}.vtt\".")
     with open(local_vtt, "rb") as f:
         query.message.reply_document(
             document=InputFile(f, filename=f"Episode {ep_num}.vtt"),
             caption=f"Here is the subtitle for Episode {ep_num}.",
         )
-
-    # Clean up the local .vtt
     try:
         os.remove(local_vtt)
     except OSError:
         pass
 
-
 # ──────────────────────────────────────────────────────────────────────────────
-# 7b) Callback when user taps "Download All" button (episode_all)
+# 7b) Callback when user taps "Download All" (episode_all)
 # ──────────────────────────────────────────────────────────────────────────────
 def episodes_all_callback(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -252,9 +280,11 @@ def episodes_all_callback(update: Update, context: CallbackContext):
         return
 
     # Let the user know we are starting the bulk download
-    query.edit_message_text("🔄 Downloading all episodes (SUB HD-2 Video + English subs)… This may take a while.")
+    query.edit_message_text(
+        "🔄 Downloading all episodes (SUB-HD2 Video + English subs)… This may take a while."
+    )
 
-    # Iterate through each episode, send its link + subtitle
+    # Iterate through each episode, send its video + subtitle
     for ep_num, episode_id in ep_list:
         # Retrieve HLS link + subtitle
         try:
@@ -266,41 +296,70 @@ def episodes_all_callback(update: Update, context: CallbackContext):
 
         # If no HLS link, skip with message
         if not hls_link:
-            bot.send_message(chat_id, f"😔 Episode {ep_num}: No SUB HD-2 Video stream found. Skipping.")
+            bot.send_message(chat_id, f"😔 Episode {ep_num}: No SUB-HD2 Video stream found. Skipping.")
             continue
 
-        # Send the episode HLS link + (placeholder for subtitle)
-        text = (
-            f"🎬 Episode {ep_num}\n\n"
-            f"Video (SUB HD-2) HLS Link:\n"
-            f"{hls_link}\n\n"
-        )
+        # Attempt to download the actual MP4
+        try:
+            local_mp4 = download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache")
+        except Exception as e:
+            logger.error(f"Error downloading video for Episode {ep_num}: {e}", exc_info=True)
+            bot.send_message(
+                chat_id,
+                f"⚠️ Could not download video for Episode {ep_num}. Sending HLS link instead.\n\n"
+                f"{hls_link}"
+            )
+            # Even if video fails, try sending subtitle if exists:
+            if subtitle_url:
+                try:
+                    local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
+                    bot.send_document(
+                        chat_id=chat_id,
+                        document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
+                        caption=f"Subtitle for Episode {ep_num}"
+                    )
+                    os.remove(local_vtt)
+                except Exception as se:
+                    logger.error(f"Error sending subtitle for Episode {ep_num}: {se}", exc_info=True)
+                    bot.send_message(chat_id, f"⚠️ Could not send subtitle for Episode {ep_num}.")
+            continue
 
-        # If no subtitle, simply send text and continue
+        # Send the downloaded MP4 as a Document
+        bot.send_message(chat_id, f"✅ Downloaded Episode {ep_num}. Sending video file…")
+        try:
+            with open(local_mp4, "rb") as vid_f:
+                bot.send_document(
+                    chat_id=chat_id,
+                    document=InputFile(vid_f, filename=f"Episode {ep_num}.mp4"),
+                    caption=f"Here is Episode {ep_num}."
+                )
+        except Exception as e:
+            logger.error(f"Error sending video for Episode {ep_num}: {e}", exc_info=True)
+            bot.send_message(chat_id, f"⚠️ Could not send video file for Episode {ep_num}.")
+        finally:
+            try:
+                os.remove(local_mp4)
+            except OSError:
+                pass
+
+        # Now send subtitle if it exists
         if not subtitle_url:
-            text += "❗ No English subtitle (.vtt) found."
-            bot.send_message(chat_id, text)
+            bot.send_message(chat_id, f"❗ No English subtitle (.vtt) found for Episode {ep_num}.")
             continue
 
-        # Otherwise, download & rename the .vtt locally
         try:
             local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
         except Exception as e:
             logger.error(f"Error downloading subtitle for Episode {ep_num}: {e}", exc_info=True)
-            text += "⚠️ Found a subtitle URL, but failed to download it."
-            bot.send_message(chat_id, text)
+            bot.send_message(chat_id, f"⚠️ Found a subtitle URL for Episode {ep_num}, but failed to download it.")
             continue
 
-        # Indicate subtitle downloaded
-        text += f"✅ English subtitle downloaded as \"Episode {ep_num}.vtt\"."
-        bot.send_message(chat_id, text)
-
-        # Send the .vtt file
+        bot.send_message(chat_id, f"✅ Subtitle for Episode {ep_num} downloaded as \"Episode {ep_num}.vtt\".")
         try:
-            with open(local_vtt, "rb") as f:
+            with open(local_vtt, "rb") as sub_f:
                 bot.send_document(
                     chat_id=chat_id,
-                    document=InputFile(f, filename=f"Episode {ep_num}.vtt"),
+                    document=InputFile(sub_f, filename=f"Episode {ep_num}.vtt"),
                     caption=f"Subtitle for Episode {ep_num}"
                 )
         except Exception as e:
@@ -312,7 +371,6 @@ def episodes_all_callback(update: Update, context: CallbackContext):
             except OSError:
                 pass
 
-
 # ——————————————————————————————————————————————————————————————
 # 8) Error handler
 # ——————————————————————————————————————————————————————————————
@@ -321,14 +379,12 @@ def error_handler(update: object, context: CallbackContext):
     if isinstance(update, Update) and update.callback_query:
         update.callback_query.message.reply_text("⚠️ Oops, something went wrong.")
 
-
 dispatcher.add_handler(CommandHandler("start", start))
 dispatcher.add_handler(CommandHandler("search", search_command))
 dispatcher.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime_idx:"))
 dispatcher.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode_idx:"))
 dispatcher.add_handler(CallbackQueryHandler(episodes_all_callback, pattern=r"^episode_all$"))
 dispatcher.add_error_handler(error_handler)
-
 
 # ——————————————————————————————————————————————————————————————
 # 9) Flask app for webhook + health check
@@ -346,7 +402,6 @@ def webhook_handler():
 def health_check():
     return "OK", 200
 
-
 # ——————————————————————————————————————————————————————————————
 # 10) On startup, set Telegram webhook to <KOYEB_APP_URL>/webhook
 # ——————————————————————————————————————————————————————————————
@@ -360,5 +415,6 @@ if __name__ == "__main__":
         raise
 
     os.makedirs("subtitles_cache", exist_ok=True)
+    os.makedirs("videos_cache", exist_ok=True)
     logger.info("Starting Flask server on port 8080…")
     app.run(host="0.0.0.0", port=8080)
