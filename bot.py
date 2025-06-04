@@ -200,7 +200,7 @@ def episode_callback(update: Update, context: CallbackContext):
     # Build a plain-text response (no MarkdownV2 anywhere)
     text = (
         f"🎬 Episode {ep_num}\n\n"
-        f"1080p (SUB HD-2) HLS Link:\n"
+        f"Video (SUB HD-2) HLS Link:\n"
         f"{hls_link}\n\n"
     )
 
@@ -272,7 +272,7 @@ def episodes_all_callback(update: Update, context: CallbackContext):
         # Send the episode HLS link + (placeholder for subtitle)
         text = (
             f"🎬 Episode {ep_num}\n\n"
-            f"1080p (SUB HD-2) HLS Link:\n"
+            f"Video (SUB HD-2) HLS Link:\n"
             f"{hls_link}\n\n"
         )
 
