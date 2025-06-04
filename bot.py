@@ -12,7 +12,7 @@ from flask import Flask, request
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, CallbackContext
 
-from telethon import TelegramClient, errors as telethon_errors
+from telethon import TelegramClient  # We no longer import TelegramError directly
 
 from hianimez_scraper import (
     search_anime,
@@ -297,7 +297,8 @@ async def telethon_send_file(chat_id: int, file_path: str, caption: str = None):
         # Log in as a Bot under MTProto (no interactive prompt)
         await client.start(bot_token=BOT_TOKEN)
         await client.send_file(entity=chat_id, file=file_path, caption=caption)
-    except telethon_errors.TelegramError as e:
+    except Exception as e:
+        # Catch any Telethon‐related or network exceptions
         logger.error(f"[Telethon] Failed to send {file_path} to chat {chat_id}: {e}", exc_info=True)
     finally:
         await client.disconnect()
