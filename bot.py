@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # bot.py
-from dotenv import load_dotenv
-load_dotenv() 
 
 import os
 import threading
@@ -12,7 +10,7 @@ from flask import Flask, request
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, CallbackContext
 
-from telethon import TelegramClient  # We no longer import TelegramError directly
+from telethon import TelegramClient
 
 from hianimez_scraper import (
     search_anime,
@@ -74,12 +72,12 @@ episode_cache = {}   # chat_id → [ (ep_num, episode_id), … ]
 def start(update: Update, context: CallbackContext):
     update.message.reply_text(
         "👋 Hello! Use /search <anime name> to find episodes on hianimez.to.\n"
-        "After selecting an episode, I will download the SUB-HD2 video and send it via MTProto."
+        "After selecting an episode, I will download the SUB-HD2 video and send it as a playable video."
     )
 
 
 # ——————————————————————————————————————————————————————————————
-# 5) /search handler
+# 5) /search handler (unchanged)
 # ——————————————————————————————————————————————————————————————
 def search_command(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
@@ -113,18 +111,16 @@ def search_command(update: Update, context: CallbackContext):
     try:
         msg.edit_text("Select the anime you want:", reply_markup=reply_markup)
     except Exception:
-        # In case the text/markup is identical, ignore
         pass
 
 
 # ——————————————————————————————————————————————————————————————
-# 6) Callback when user taps an anime button (anime_idx)
+# 6) Callback when user taps an anime button (unchanged)
 # ——————————————————————————————————————————————————————————————
 def anime_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     chat_id = query.message.chat.id
 
-    # Acknowledge immediately
     try:
         query.answer()
     except Exception:
@@ -152,7 +148,6 @@ def anime_callback(update: Update, context: CallbackContext):
     title, slug = anime_list[idx]
     anime_url = f"https://hianimez.to/watch/{slug}"
 
-    # Let the user know we’re fetching episodes
     try:
         query.edit_message_text(
             f"🔍 Fetching episodes for *{title}*…", parse_mode="MarkdownV2"
@@ -177,10 +172,8 @@ def anime_callback(update: Update, context: CallbackContext):
             pass
         return
 
-    # Store episodes in cache
     episode_cache[chat_id] = [(ep_num, ep_id) for ep_num, ep_id in episodes]
 
-    # Build buttons: “Episode 1”, “Episode 2”, … + “Download All”
     buttons = []
     for i, (ep_num, ep_id) in enumerate(episode_cache[chat_id]):
         buttons.append([InlineKeyboardButton(f"Episode {ep_num}", callback_data=f"episode_idx:{i}")])
@@ -194,13 +187,12 @@ def anime_callback(update: Update, context: CallbackContext):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 7a) Callback when user taps a single episode button (episode_idx)
+# 7a) Callback when user taps a single episode button (unchanged)
 # ──────────────────────────────────────────────────────────────────────────────
 def episode_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     chat_id = query.message.chat.id
 
-    # Acknowledge immediately
     try:
         query.answer()
     except Exception:
@@ -227,7 +219,6 @@ def episode_callback(update: Update, context: CallbackContext):
 
     ep_num, episode_id = ep_list[idx]
 
-    # Let the user know we queued their request
     try:
         query.edit_message_text(
             f"⏳ Episode {ep_num} queued for download… You’ll receive it shortly."
@@ -235,7 +226,6 @@ def episode_callback(update: Update, context: CallbackContext):
     except Exception:
         pass
 
-    # Start a background thread for the heavy work
     thread = threading.Thread(
         target=download_and_send_episode,
         args=(chat_id, ep_num, episode_id),
@@ -247,13 +237,12 @@ def episode_callback(update: Update, context: CallbackContext):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 7b) Callback when user taps “Download All” (episode_all)
+# 7b) Callback when user taps “Download All” (unchanged)
 # ──────────────────────────────────────────────────────────────────────────────
 def episodes_all_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     chat_id = query.message.chat.id
 
-    # Acknowledge right away
     try:
         query.answer()
     except Exception:
@@ -267,13 +256,11 @@ def episodes_all_callback(update: Update, context: CallbackContext):
             pass
         return
 
-    # Inform user that all episodes are queued
     try:
         query.edit_message_text("⏳ Queued all episodes for download… You’ll receive them one by one.")
     except Exception:
         pass
 
-    # Spawn a thread to handle downloading & sending all episodes
     thread = threading.Thread(
         target=download_and_send_all_episodes,
         args=(chat_id, ep_list),
@@ -285,20 +272,27 @@ def episodes_all_callback(update: Update, context: CallbackContext):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 8) Helper: Telethon “bot” upload (MTProto) to send any size file
+# 8) Helper: Telethon “bot” upload (MTProto) to send any size file as a playable video
 # ──────────────────────────────────────────────────────────────────────────────
 async def telethon_send_file(chat_id: int, file_path: str, caption: str = None):
     """
     Uses Telethon (logged in as a Bot via bot_token) to send a single file (up to 2 GB)
-    into `chat_id`. We never prompt for input—everything comes from env vars.
+    into `chat_id`, **explicitly as a video** (not as a generic document).
     """
     client = TelegramClient("telethon_bot_session", int(TELETHON_API_ID), TELETHON_API_HASH)
     try:
         # Log in as a Bot under MTProto (no interactive prompt)
         await client.start(bot_token=BOT_TOKEN)
-        await client.send_file(entity=chat_id, file=file_path, caption=caption)
+
+        # By specifying force_document=False (the default) and supports_streaming=True,
+        # Telethon will detect “.mp4” and send it as a native Telegram video (playable inline).
+        await client.send_file(
+            entity=chat_id,
+            file=file_path,
+            caption=caption,
+            force_document=True,
+        )
     except Exception as e:
-        # Catch any Telethon‐related or network exceptions
         logger.error(f"[Telethon] Failed to send {file_path} to chat {chat_id}: {e}", exc_info=True)
     finally:
         await client.disconnect()
@@ -315,19 +309,17 @@ def send_file_via_telethon(chat_id: int, file_path: str, caption: str = None):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 9) Background task for sending a single episode
+# 9) Background task for sending a single episode (modified for ordering)
 # ──────────────────────────────────────────────────────────────────────────────
 def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
     """
     1) Extract HLS link + subtitle URL.
     2) Use ffmpeg to download the raw MP4.
-    3) ALWAYS send the raw MP4 via Telethon (MTProto) – no size check.
-    4) Then send the subtitle (.vtt) via Bot API (they are small).
+    3) **Send the raw MP4 via Telethon (MTProto) as a video.**
+    4) **Once the video is fully uploaded, send the subtitle (.vtt) via Bot API.**
     5) If any step fails, fallback to sending the HLS link + subtitle.
     """
-    # ——————————————————————————
-    # (a) Step 1: Extract HLS + subtitle URL
-    # ——————————————————————————
+    # — Step 1: Extract HLS + subtitle URL
     try:
         hls_link, subtitle_url = extract_episode_stream_and_subtitle(episode_id)
     except Exception as e:
@@ -336,12 +328,10 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         return
 
     if not hls_link:
-        bot.send_message(chat_id, f"😔 Could not find a SUB-HD2 Video stream for Episode {ep_num}.")
+        bot.send_message(chat_id, f"😔 Could not find a SUB-HD2 video stream for Episode {ep_num}.")
         return
 
-    # ——————————————————————————
-    # (b) Step 2: Download raw MP4 via ffmpeg
-    # ——————————————————————————
+    # — Step 2: Download raw MP4 via ffmpeg
     try:
         raw_mp4 = download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache")
     except Exception as e:
@@ -350,7 +340,7 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
             chat_id,
             f"⚠️ Failed to convert Episode {ep_num} to MP4. Here’s the HLS link instead:\n\n{hls_link}"
         )
-        # Try sending subtitle if it exists
+        # Attempt to send subtitle (if it exists)
         if subtitle_url:
             try:
                 local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
@@ -367,23 +357,48 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
                 bot.send_message(chat_id, f"⚠️ Could not download/send subtitle for Episode {ep_num}.")
         return
 
-    # ——————————————————————————
-    # (c) Step 3: Always send raw MP4 via Telethon (MTProto)
-    # ——————————————————————————
-    bot.send_message(chat_id, f"📦 Sending full‐quality Episode {ep_num} via Telethon…")
-    thread = threading.Thread(
-        target=send_file_via_telethon,
-        args=(chat_id, raw_mp4, f"Episode {ep_num}.mp4 (Full quality)"),
-        daemon=True
-    )
-    thread.start()
+    # — Step 3: Send raw MP4 via Telethon, explicitly as a video
+    bot.send_message(chat_id, f"📦 Sending full‐quality Episode {ep_num} (as video) via Telethon…")
+    try:
+        # **This is synchronous** inside our background thread,
+        # so we wait for the upload to finish before proceeding.
+        asyncio.run(telethon_send_file(
+            chat_id=chat_id,
+            file_path=raw_mp4,
+            caption=f"Episode {ep_num}.mp4 (Full quality)"
+        ))
+    except Exception as e:
+        logger.error(f"[Thread] Telethon upload failed for Episode {ep_num}: {e}", exc_info=True)
+        # If Telethon fails, send HLS link instead
+        bot.send_message(chat_id, f"⚠️ Failed to send Episode {ep_num} via Telethon. Here’s the HLS link:\n\n{hls_link}")
+        try:
+            os.remove(raw_mp4)
+        except OSError:
+            pass
+        # Attempt to send subtitle (if it exists)
+        if subtitle_url:
+            try:
+                local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
+                bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt”.")
+                with open(local_vtt, "rb") as f:
+                    bot.send_document(
+                        chat_id=chat_id,
+                        document=InputFile(f, filename=f"Episode {ep_num}.vtt"),
+                        caption=f"Here is the subtitle for Episode {ep_num}.",
+                    )
+                os.remove(local_vtt)
+            except Exception as se:
+                logger.error(f"[Thread] Error sending subtitle (Episode {ep_num}): {se}", exc_info=True)
+                bot.send_message(chat_id, f"⚠️ Could not download/send subtitle for Episode {ep_num}.")
+        return
+    finally:
+        # Clean up the raw MP4 once Telethon is done with it
+        try:
+            os.remove(raw_mp4)
+        except OSError:
+            pass
 
-    # We do NOT delete raw_mp4 here; let Telethon finish using it. Optionally,
-    # you could join that thread or clean up in a callback. For simplicity, we leave it.
-
-    # ——————————————————————————
-    # (d) Step 4: Send subtitle via Bot API (if present)
-    # ——————————————————————————
+    # — Step 4: Send subtitle via Bot API (only after video is fully uploaded)
     if not subtitle_url:
         bot.send_message(chat_id, "❗ No English subtitle (.vtt) found.")
         return
@@ -414,14 +429,14 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 10) Background task for “Download All” episodes
+# 10) Background task for “Download All” episodes (apply same pattern)
 # ──────────────────────────────────────────────────────────────────────────────
 def download_and_send_all_episodes(chat_id: int, ep_list: list):
     """
     Loops through each (ep_num, episode_id):
       1) Extract HLS + subtitle
       2) Download raw MP4
-      3) Send raw MP4 via Telethon
+      3) Send raw MP4 as a video via Telethon (MTProto)
       4) Send subtitle via Bot API
       5) If any step fails, fallback to HLS link + subtitle
     """
@@ -447,7 +462,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
                 chat_id,
                 f"⚠️ Could not convert Episode {ep_num} to MP4. Here’s the HLS link instead:\n\n{hls_link}"
             )
-            # Send subtitle if present
+            # Attempt to send subtitle if it exists
             if subtitle_url:
                 try:
                     local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
@@ -463,14 +478,40 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
                     bot.send_message(chat_id, f"⚠️ Could not send subtitle for Episode {ep_num}.")
             continue
 
-        # (c) Send raw MP4 via Telethon
+        # (c) Send raw MP4 via Telethon, explicitly as video
         bot.send_message(chat_id, f"📦 Sending full‐quality Episode {ep_num} via Telethon…")
-        thread = threading.Thread(
-            target=send_file_via_telethon,
-            args=(chat_id, raw_mp4, f"Episode {ep_num}.mp4 (Full quality)"),
-            daemon=True
-        )
-        thread.start()
+        try:
+            asyncio.run(telethon_send_file(
+                chat_id=chat_id,
+                file_path=raw_mp4,
+                caption=f"Episode {ep_num}.mp4 (Full quality)"
+            ))
+        except Exception as e:
+            logger.error(f"[Thread] Telethon upload failed for Episode {ep_num}: {e}", exc_info=True)
+            bot.send_message(chat_id, f"⚠️ Failed to send Episode {ep_num} via Telethon. Here’s the HLS link:\n\n{hls_link}")
+            try:
+                os.remove(raw_mp4)
+            except OSError:
+                pass
+            if subtitle_url:
+                try:
+                    local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
+                    bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt”.")
+                    bot.send_document(
+                        chat_id=chat_id,
+                        document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
+                        caption=f"Here is the subtitle for Episode {ep_num}."
+                    )
+                    os.remove(local_vtt)
+                except Exception as se:
+                    logger.error(f"[Thread] Error sending subtitle (Episode {ep_num}): {se}", exc_info=True)
+                    bot.send_message(chat_id, f"⚠️ Could not send subtitle for Episode {ep_num}.")
+            continue
+        finally:
+            try:
+                os.remove(raw_mp4)
+            except OSError:
+                pass
 
         # (d) Send subtitle
         if not subtitle_url:
@@ -503,7 +544,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 11) Error handler
+# 11) Error handler (unchanged)
 # ──────────────────────────────────────────────────────────────────────────────
 def error_handler(update: object, context: CallbackContext):
     logger.error("Exception while handling an update:", exc_info=context.error)
@@ -515,7 +556,7 @@ def error_handler(update: object, context: CallbackContext):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 12) Register handlers with the dispatcher
+# 12) Register handlers with the dispatcher (unchanged)
 # ──────────────────────────────────────────────────────────────────────────────
 dispatcher.add_handler(CommandHandler("start", start))
 dispatcher.add_handler(CommandHandler("search", search_command))
@@ -526,7 +567,7 @@ dispatcher.add_error_handler(error_handler)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 13) Flask app for webhook + health check
+# 13) Flask app for webhook + health check (unchanged)
 # ──────────────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 
@@ -543,7 +584,7 @@ def health_check():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 14) On startup, set Telegram webhook to <KOYEB_APP_URL>/webhook
+# 14) On startup, set Telegram webhook to <KOYEB_APP_URL>/webhook (unchanged)
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     webhook_url = f"{KOYEB_APP_URL}/webhook"
