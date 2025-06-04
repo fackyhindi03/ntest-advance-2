@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 # 3) In-memory caches for search results & episode lists per chat
 # ——————————————————————————————————————————————————————————————
 search_cache = {}   # chat_id → [ (title, slug), … ]
-episode_cache = {}  # chat_id → [ (ep_num, ep_slug), … ]
+episode_cache = {}  # chat_id → [ (ep_num, episode_id), … ]
 
 
 # ——————————————————————————————————————————————————————————————
@@ -93,11 +93,11 @@ def search_command(update: Update, context: CallbackContext):
         return
 
     # Store (title, slug) in search_cache[chat_id]
+    # `slug` here is the animeId from AniWatch (e.g. "raven-of-the-inner-palace-18168").
     search_cache[chat_id] = [(title, slug) for title, anime_url, slug in results]
 
     buttons = []
     for idx, (title, slug) in enumerate(search_cache[chat_id]):
-        # callback_data = "anime_idx:<idx>"
         buttons.append([InlineKeyboardButton(title, callback_data=f"anime_idx:{idx}")])
 
     reply_markup = InlineKeyboardMarkup(buttons)
@@ -105,18 +105,18 @@ def search_command(update: Update, context: CallbackContext):
 
 
 # ——————————————————————————————————————————————————————————————
-# 6) Callback when user taps an anime (anime_idx callback)
+# 6) Callback when user taps an anime button (anime_idx)
 # ——————————————————————————————————————————————————————————————
 def anime_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
     chat_id = query.message.chat.id
-    data = query.data  # "anime_idx:<i>"
+    data = query.data  # e.g. "anime_idx:3"
     try:
         _, idx_str = data.split(":", maxsplit=1)
         idx = int(idx_str)
-    except:
+    except Exception:
         query.edit_message_text("❌ Internal error: invalid anime selection.")
         return
 
@@ -143,14 +143,13 @@ def anime_callback(update: Update, context: CallbackContext):
         query.edit_message_text("No episodes found for that anime.")
         return
 
-    # Store (ep_num, ep_slug) in episode_cache[chat_id]
+    # Store (ep_num, episode_id) in episode_cache[chat_id]
     episode_cache[chat_id] = []
-    for ep_num, ep_url in episodes:
-        ep_slug = ep_url.rstrip("/").split("/")[-1]
-        episode_cache[chat_id].append((ep_num, ep_slug))
+    for ep_num, ep_id in episodes:
+        episode_cache[chat_id].append((ep_num, ep_id))
 
     buttons = []
-    for i, (ep_num, ep_slug) in enumerate(episode_cache[chat_id]):
+    for i, (ep_num, ep_id) in enumerate(episode_cache[chat_id]):
         buttons.append([InlineKeyboardButton(f"Episode {ep_num}", callback_data=f"episode_idx:{i}")])
 
     reply_markup = InlineKeyboardMarkup(buttons)
@@ -158,18 +157,18 @@ def anime_callback(update: Update, context: CallbackContext):
 
 
 # ——————————————————————————————————————————————————————————————
-# 7) Callback when user taps an episode (episode_idx callback)
+# 7) Callback when user taps an episode button (episode_idx)
 # ——————————————————————————————————————————————————————————————
 def episode_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
     chat_id = query.message.chat.id
-    data = query.data  # "episode_idx:<i>"
+    data = query.data  # e.g. "episode_idx:5"
     try:
         _, idx_str = data.split(":", maxsplit=1)
         idx = int(idx_str)
-    except:
+    except Exception:
         query.edit_message_text("❌ Internal error: invalid episode selection.")
         return
 
@@ -178,23 +177,20 @@ def episode_callback(update: Update, context: CallbackContext):
         query.edit_message_text("❌ Internal error: episode index out of range.")
         return
 
-    ep_num, ep_slug = ep_list[idx]
-    # Now call extract with (ep_slug, ep_num), not a full URL:
+    ep_num, episode_id = ep_list[idx]
     msg = query.edit_message_text(
         f"🔄 Retrieving SUB HD-2 (1080p) link and English subtitle for Episode {ep_num}…"
     )
 
     try:
-        hls_link, subtitle_url = extract_episode_stream_and_subtitle(ep_slug, ep_num)
+        hls_link, subtitle_url = extract_episode_stream_and_subtitle(episode_id)
     except Exception as e:
         logger.error(f"Error extracting episode data: {e}", exc_info=True)
         query.edit_message_text(f"❌ Failed to extract data for Episode {ep_num}.")
         return
 
     if not hls_link:
-        query.edit_message_text(
-            f"😔 Could not find a SUB HD-2 (1080p) stream for Episode {ep_num}."
-        )
+        query.edit_message_text(f"😔 Could not find a SUB HD-2 (1080p) stream for Episode {ep_num}.")
         return
 
     text = (
@@ -212,7 +208,7 @@ def episode_callback(update: Update, context: CallbackContext):
         local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
     except Exception as e:
         logger.error(f"Error downloading/renaming subtitle: {e}", exc_info=True)
-        text += "⚠️ Found a subtitle URL but failed to download it.\n"
+        text += "⚠️ Found a subtitle URL, but failed to download it.\n"
         query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
         return
 
@@ -240,7 +236,6 @@ def error_handler(update: object, context: CallbackContext):
         update.callback_query.message.reply_text("⚠️ Oops, something went wrong.")
 
 
-# Register all handlers
 dispatcher.add_handler(CommandHandler("start", start))
 dispatcher.add_handler(CommandHandler("search", search_command))
 dispatcher.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime_idx:"))
