@@ -1,128 +1,125 @@
 import os
-import requests
 import subprocess
-import logging
+import time
+import requests
 
-logger = logging.getLogger(__name__)
-
-
-def download_and_rename_subtitle(subtitle_url: str, ep_num: str,
-                                 cache_dir: str = "subtitles_cache") -> str:
+def download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache"):
     """
-    Fetches a .vtt subtitle from `subtitle_url` and saves it to:
-        <cache_dir>/Episode <ep_num>.vtt
+    Downloads subtitle from subtitle_url, saves as "Episode {ep_num}.vtt" in cache_dir.
     Returns the local file path.
     """
     os.makedirs(cache_dir, exist_ok=True)
-    local_filename = f"Episode {ep_num}.vtt"
-    local_path = os.path.join(cache_dir, local_filename)
+    local_filename = os.path.join(cache_dir, f"Episode {ep_num}.vtt")
 
-    resp = requests.get(subtitle_url, timeout=15)
-    resp.raise_for_status()
+    # Stream‐download via requests
+    response = requests.get(subtitle_url, stream=True, timeout=30)
+    response.raise_for_status()
 
-    with open(local_path, "wb") as f:
-        f.write(resp.content)
+    with open(local_filename, "wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
 
-    return local_path
+    return local_filename
 
 
-def download_and_rename_video(hls_url: str, ep_num: str,
-                             cache_dir: str = "videos_cache") -> str:
+def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progress_callback=None):
     """
-    Uses ffmpeg to pull down an HLS stream (m3u8) and save as MP4:
-        ffmpeg -i <hls_url> -c copy <cache_dir>/Episode <ep_num>.mp4
-    Returns the local MP4 file path. Raises if ffmpeg fails.
+    Uses ffprobe → ffmpeg to download an HLS stream into an MP4.
+    Reports progress via progress_callback(downloaded_mb, total_duration_s, percent, speed_mb_s, elapsed_s, eta_s).
+
+    Returns the local file path "Episode {ep_num}.mp4".
     """
     os.makedirs(cache_dir, exist_ok=True)
-    local_filename = f"Episode {ep_num}.mp4"
-    local_path = os.path.join(cache_dir, local_filename)
+    output_path = os.path.join(cache_dir, f"Episode {ep_num}.mp4")
 
-    cmd = [
+    # 1) Use ffprobe to get total duration (in seconds)
+    try:
+        cmd_probe = [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            hls_link
+        ]
+        result = subprocess.run(cmd_probe, capture_output=True, text=True, timeout=15)
+        duration = float(result.stdout.strip())
+    except Exception as e:
+        raise RuntimeError(f"Failed to get duration via ffprobe: {e}")
+
+    # 2) Run ffmpeg with "-progress pipe:1" to get periodic progress on stdout
+    cmd_ffmpeg = [
         "ffmpeg",
-        "-y",             # overwrite output if it already exists
-        "-i", hls_url,    # input HLS URL
-        "-c", "copy",     # copy both audio & video without re-encoding
-        local_path
+        "-i", hls_link,
+        "-c", "copy",
+        "-bsf:a", "aac_adtstoasc",   # fix AAC frames if needed
+        "-progress", "pipe:1",
+        "-nostats",
+        output_path
     ]
+    proc = subprocess.Popen(cmd_ffmpeg, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
 
-    try:
-        subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True,
-            universal_newlines=True
-        )
-    except subprocess.CalledProcessError as e:
-        logger.error(f"ffmpeg failed (download_and_rename_video): {e.stderr}")
-        raise RuntimeError(f"Failed to download video for Episode {ep_num}") from e
+    start_time = time.time()
+    downloaded_mb = 0.0
 
-    return local_path
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            # If process ended, break
+            if proc.poll() is not None:
+                break
+            continue
 
+        line = line.strip()
+        if "=" not in line:
+            continue
+        key, val = line.split("=", 1)
 
-def transcode_to_telegram_friendly(input_path: str, ep_num: str,
-                                   cache_dir: str = "videos_cache") -> str:
-    """
-    If the MP4 at `input_path` is >50 MB, re-encode it so that
-    the result is under ~50 MB. Returns the new file path.
-    Raises on failure.
-    """
-    MAX_BYTES = 50 * 1024 * 1024  # 50 MB
+        if key == "out_time_ms":
+            # out_time_ms is the number of microseconds of video already processed
+            try:
+                out_time_ms = int(val)
+            except ValueError:
+                continue
 
-    try:
-        file_size = os.path.getsize(input_path)
-    except OSError:
-        raise RuntimeError(f"Cannot access {input_path} to check size")
+            current_time_s = out_time_ms / 1e6
+            percent = (current_time_s / duration) * 100 if duration > 0 else 0
 
-    # If already ≤50 MB, no need to re-encode
-    if file_size <= MAX_BYTES:
-        return input_path
+            # Check file size so far
+            try:
+                size_bytes = os.path.getsize(output_path)
+            except OSError:
+                size_bytes = 0
+            downloaded_mb = size_bytes / (1024 * 1024)
 
-    # Otherwise, build a “small” filename
-    base_dir = os.path.dirname(input_path)
-    small_filename = f"Episode {ep_num}_small.mp4"
-    small_path = os.path.join(base_dir, small_filename)
+            elapsed = time.time() - start_time
+            speed = downloaded_mb / elapsed if elapsed > 0 else 0
 
-    # ffmpeg arguments to scale down & lower bitrate:
-    #   • scale width=640 px (auto height),
-    #   • H.264 @ ~800 kbps, AAC @ 128 kbps
-    cmd = [
-        "ffmpeg",
-        "-y",                      # overwrite if exists
-        "-i", input_path,
-        "-vf", "scale=640:-2",     # scale width=640, preserve aspect ratio
-        "-c:v", "libx264",
-        "-b:v", "800k",
-        "-preset", "veryfast",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        small_path
-    ]
+            # ETA = elapsed × (100 – percent) / percent
+            eta = (elapsed * (100 - percent) / percent) if percent > 0 else None
 
-    try:
-        subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True,
-            universal_newlines=True
-        )
-    except subprocess.CalledProcessError as e:
-        logger.error(f"ffmpeg failed (transcode_to_telegram_friendly): {e.stderr}")
-        raise RuntimeError(f"Failed to transcode Episode {ep_num} to small MP4") from e
+            if progress_callback:
+                # Report: downloaded_mb, total_duration_s, percent, speed_mb_s, elapsed_s, eta_s
+                progress_callback(downloaded_mb, duration, percent, speed, elapsed, eta)
 
-    # Confirm new file is ≤50 MB:
-    try:
-        new_size = os.path.getsize(small_path)
-    except OSError:
-        raise RuntimeError(f"Could not access re-encoded file {small_path}")
+        elif key == "progress" and val == "end":
+            # Reached the end of encoding → report 100% one final time
+            try:
+                size_bytes = os.path.getsize(output_path)
+                downloaded_mb = size_bytes / (1024 * 1024)
+            except OSError:
+                downloaded_mb = downloaded_mb
+            elapsed = time.time() - start_time
+            speed = downloaded_mb / elapsed if elapsed > 0 else 0
+            percent = 100.0
+            eta = 0.0
 
-    if new_size > MAX_BYTES:
-        # If it’s still too big, delete it and error out
-        try:
-            os.remove(small_path)
-        except OSError:
-            pass
-        raise RuntimeError(f"Re-encoded file still too large ({new_size} bytes)")
+            if progress_callback:
+                progress_callback(downloaded_mb, duration, percent, speed, elapsed, eta)
+            break
 
-    return small_path
+    retcode = proc.wait()
+    if retcode != 0:
+        raise RuntimeError(f"ffmpeg failed with code {retcode}")
+
+    return output_path
