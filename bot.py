@@ -10,20 +10,25 @@ from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, Callb
 from hianimez_scraper import search_anime, get_episodes_list, extract_episode_stream_and_subtitle
 from utils import download_and_rename_subtitle
 
-# 1) Environment Variables
+# ——————————————————————————————————————————————————————————————
+# 1) Load required environment variables
+# ——————————————————————————————————————————————————————————————
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TELEGRAM_TOKEN:
     raise RuntimeError("TELEGRAM_TOKEN environment variable is not set")
 
 KOYEB_APP_URL = os.getenv("KOYEB_APP_URL")
 if not KOYEB_APP_URL:
-    raise RuntimeError("KOYEB_APP_URL environment variable is not set. It should be your public HTTPS URL")
+    raise RuntimeError("KOYEB_APP_URL environment variable is not set. It must be your bot’s public HTTPS URL (no trailing slash).")
 
 ANIWATCH_API_BASE = os.getenv("ANIWATCH_API_BASE")
 if not ANIWATCH_API_BASE:
-    raise RuntimeError("ANIWATCH_API_BASE environment variable is not set. It should be your AniWatch API base URL")
+    raise RuntimeError("ANIWATCH_API_BASE environment variable is not set. It should be your AniWatch API URL.")
 
-# 2) Bot + Dispatcher with worker threads
+
+# ——————————————————————————————————————————————————————————————
+# 2) Initialize Telegram Bot + Dispatcher (with worker threads)
+# ——————————————————————————————————————————————————————————————
 bot = Bot(token=TELEGRAM_TOKEN)
 dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
 
@@ -33,14 +38,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# 3) Handlers
+# ——————————————————————————————————————————————————————————————
+# 3) /start handler
+# ——————————————————————————————————————————————————————————————
 def start(update: Update, context: CallbackContext):
     update.message.reply_text(
-        "👋 Hello! I can help you search for anime on hianimez.to "
-        "and extract the SUB-HD2 (1080p) HLS link + English subtitles.\n\n"
+        "👋 Hello! I can help you search anime on hianimez.to and\n"
+        " extract the SUB-HD2 (1080p) HLS link + English subtitles.\n\n"
         "Use /search <anime name> to begin."
     )
 
+
+# ——————————————————————————————————————————————————————————————
+# 4) /search handler (builds anime buttons with slug only)
+# ——————————————————————————————————————————————————————————————
 def search_command(update: Update, context: CallbackContext):
     if len(context.args) == 0:
         update.message.reply_text("Please provide an anime name. Example: /search Naruto")
@@ -62,16 +73,24 @@ def search_command(update: Update, context: CallbackContext):
 
     buttons = []
     for title, anime_url, slug in results:
-        buttons.append([InlineKeyboardButton(title, callback_data=f"anime:{anime_url}")])
+        # Only send the slug in callback_data
+        buttons.append([InlineKeyboardButton(title, callback_data=f"anime:{slug}")])
 
     reply_markup = InlineKeyboardMarkup(buttons)
     msg.edit_text("Select the anime you want:", reply_markup=reply_markup)
 
+
+# ——————————————————————————————————————————————————————————————
+# 5) Callback when user taps an anime button (just the slug)
+# ——————————————————————————————————————————————————————————————
 def anime_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
-    _, anime_url = query.data.split(":", maxsplit=1)
+    # Parse the <slug> out of "anime:<slug>"
+    _, slug = query.data.split(":", maxsplit=1)
+    anime_url = f"https://hianimez.to/watch/{slug}"
+
     try:
         episodes = get_episodes_list(anime_url)
     except Exception as e:
@@ -85,16 +104,33 @@ def anime_callback(update: Update, context: CallbackContext):
 
     buttons = []
     for ep_num, ep_url in episodes:
-        buttons.append([InlineKeyboardButton(f"Episode {ep_num}", callback_data=f"episode|{ep_num}|{ep_url}")])
+        # Extract just the <ep_slug> from the full URL
+        ep_slug = ep_url.rstrip("/").split("/")[-1]
+        buttons.append(
+            [InlineKeyboardButton(f"Episode {ep_num}", callback_data=f"episode:{ep_slug}")]
+        )
 
     reply_markup = InlineKeyboardMarkup(buttons)
     query.edit_message_text("Select an episode:", reply_markup=reply_markup)
 
+
+# ——————————————————————————————————————————————————————————————
+# 6) Callback when user taps an episode button (just the episode slug)
+# ——————————————————————————————————————————————————————————————
 def episode_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
-    _, ep_num, ep_url = query.data.split("|", maxsplit=2)
+    # Parse <ep_slug> from "episode:<ep_slug>"
+    _, ep_slug = query.data.split(":", maxsplit=1)
+    ep_url = f"https://hianimez.to/watch/{ep_slug}"
+
+    # Extract the numeric part after "-episode-" for logging
+    try:
+        ep_num = ep_slug.split("-episode-")[-1]
+    except Exception:
+        ep_num = "?"
+
     msg = query.edit_message_text(
         f"🔄 Retrieving SUB HD-2 (1080p) link and English subtitle for Episode {ep_num}…"
     )
@@ -107,7 +143,9 @@ def episode_callback(update: Update, context: CallbackContext):
         return
 
     if not hls_link:
-        query.edit_message_text(f"😔 Could not find a SUB HD-2 (1080p) stream for Episode {ep_num}.")
+        query.edit_message_text(
+            f"😔 Could not find a SUB HD-2 (1080p) stream for Episode {ep_num}."
+        )
         return
 
     text = (
@@ -122,40 +160,48 @@ def episode_callback(update: Update, context: CallbackContext):
         return
 
     try:
-        local_vtt_path = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
+        local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
     except Exception as e:
         logger.error(f"Error downloading/renaming subtitle: {e}", exc_info=True)
-        text += "⚠️ Found an English subtitle URL but failed to download it."
+        text += "⚠️ Found a subtitle URL but failed to download it.\n"
         query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
         return
 
-    text += f"✅ English subtitle downloaded and renamed to `Episode {ep_num}.vtt`."
+    text += f"✅ English subtitle downloaded as `Episode {ep_num}.vtt`."
     query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
 
-    with open(local_vtt_path, "rb") as f:
+    with open(local_vtt, "rb") as f:
         query.message.reply_document(
             document=InputFile(f, filename=f"Episode {ep_num}.vtt"),
             caption=f"Here is the subtitle for Episode {ep_num}.",
         )
 
     try:
-        os.remove(local_vtt_path)
+        os.remove(local_vtt)
     except OSError:
         pass
 
+
+# ——————————————————————————————————————————————————————————————
+# 7) Error handler
+# ——————————————————————————————————————————————————————————————
 def error_handler(update: object, context: CallbackContext):
     logger.error("Exception while handling an update:", exc_info=context.error)
     if isinstance(update, Update) and update.callback_query:
         update.callback_query.message.reply_text("⚠️ Oops, something went wrong.")
 
+
+# Register all handlers
 dispatcher.add_handler(CommandHandler("start", start))
 dispatcher.add_handler(CommandHandler("search", search_command))
 dispatcher.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime:"))
-dispatcher.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode\|"))
+dispatcher.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode:"))
 dispatcher.add_error_handler(error_handler)
 
 
-# 4) Flask app for webhooks & health check
+# ——————————————————————————————————————————————————————————————
+# 8) Flask app for webhook + health check
+# ——————————————————————————————————————————————————————————————
 app = Flask(__name__)
 
 @app.route("/webhook", methods=["POST"])
@@ -170,7 +216,9 @@ def health_check():
     return "OK", 200
 
 
-# 5) On startup, set the Telegram webhook
+# ——————————————————————————————————————————————————————————————
+# 9) On startup, set Telegram webhook to <KOYEB_APP_URL>/webhook
+# ——————————————————————————————————————————————————————————————
 if __name__ == "__main__":
     webhook_url = f"{KOYEB_APP_URL}/webhook"
     try:
@@ -181,5 +229,5 @@ if __name__ == "__main__":
         raise
 
     os.makedirs("subtitles_cache", exist_ok=True)
-    logger.info("Starting Flask server (health check + webhook) on port 8080…")
+    logger.info("Starting Flask server on port 8080…")
     app.run(host="0.0.0.0", port=8080)
