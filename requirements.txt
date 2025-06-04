@@ -4,3 +4,4 @@ requests==2.31.0
 cloudscraper==1.2.58
 beautifulsoup4==4.12.2
 lxml==4.9.3
+telethon==1.30.0
