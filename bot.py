@@ -63,7 +63,7 @@ episode_cache = {}  # chat_id → [ (ep_num, episode_id), … ]
 def start(update: Update, context: CallbackContext):
     update.message.reply_text(
         "👋 Hello! I can help you search for anime on hianimez.to and\n"
-        " extract the SUB-HD2 (1080p) HLS link + English subtitles.\n\n"
+        " extract the SUB-HD2 Video HLS link + English subtitles.\n\n"
         "Use /search <anime name> to begin."
     )
 
@@ -182,7 +182,7 @@ def episode_callback(update: Update, context: CallbackContext):
     ep_num, episode_id = ep_list[idx]
     # Let the user know we are working on it:
     msg = query.edit_message_text(
-        f"🔄 Retrieving SUB HD-2 (1080p) link and English subtitle for Episode {ep_num}..."
+        f"🔄 Retrieving SUB HD-2 Video link and English subtitle for Episode {ep_num}..."
     )
 
     try:
@@ -194,7 +194,7 @@ def episode_callback(update: Update, context: CallbackContext):
 
     # If we couldn’t find any HLS URL, bail out:
     if not hls_link:
-        query.edit_message_text(f"😔 Could not find a SUB HD-2 (1080p) stream for Episode {ep_num}.")
+        query.edit_message_text(f"😔 Could not find a SUB HD-2 Video stream for Episode {ep_num}.")
         return
 
     # Build a plain-text response (no MarkdownV2 anywhere)
@@ -252,7 +252,7 @@ def episodes_all_callback(update: Update, context: CallbackContext):
         return
 
     # Let the user know we are starting the bulk download
-    query.edit_message_text("🔄 Downloading all episodes (SUB HD-2 + English subs)… This may take a while.")
+    query.edit_message_text("🔄 Downloading all episodes (SUB HD-2 Video + English subs)… This may take a while.")
 
     # Iterate through each episode, send its link + subtitle
     for ep_num, episode_id in ep_list:
@@ -266,7 +266,7 @@ def episodes_all_callback(update: Update, context: CallbackContext):
 
         # If no HLS link, skip with message
         if not hls_link:
-            bot.send_message(chat_id, f"😔 Episode {ep_num}: No SUB HD-2 (1080p) stream found. Skipping.")
+            bot.send_message(chat_id, f"😔 Episode {ep_num}: No SUB HD-2 Video stream found. Skipping.")
             continue
 
         # Send the episode HLS link + (placeholder for subtitle)
