@@ -81,7 +81,7 @@ def start(update: Update, context: CallbackContext):
         "2️⃣ Select the anime from the list of results\n"
         "3️⃣ Choose an episode to download \\(or tap \\\"Download All\\\"\\)\n"
         "4️⃣ Receive the high\\-quality MP4 \\+ subtitles automatically\n\n"
-        "📩 Contact *@THe_vK_3* if any problem or Query."
+        "📩 Contact *@THe_vK_3* if any problem or Query "
     )
     update.message.reply_text(
         welcome_text,
