@@ -69,22 +69,25 @@ selected_anime_title = {}   # chat_id → title (so we can refer back to it)
 # ——————————————————————————————————————————————————————————————
 def start(update: Update, context: CallbackContext):
     welcome_text = (
-        "🔰 "  # flower emoji
-        "*Hianime Downloader* 🔰\n\n"  # note the backslash escaping the space in “AniDL Bot”—see below
-        "🔍 *Find & Download Anime Episodes*\n\n"
-        "🎯 *What I Can Do:-*\n"
+        "🌸 *Hianime Downloader* 🌸\n\n"
+        "🔍 *Find \\& Download Anime Episodes Directly*\n\n"
+        "🎯 *What I Can Do:*\n"
         "• Search for your favorite anime on [hianimez\\.to](https://hianimez\\.to)\n"
         "• Download SUB\\-HD2 video as high\\-quality MP4\n"
         "• Include English subtitles \\(SRT/VTT\\)\n"
         "• Send everything as a document \\(no quality loss\\)\n\n"
-        "📝 *How to Use:-*\n"
-        "1️⃣ `/search <anime name>` – Find anime titles\n"
+        "📝 *How to Use:*\n"
+        "1️⃣ `/search <anime name>` \\- Find anime titles\n"
         "2️⃣ Select the anime from the list of results\n"
-        "3️⃣ Choose an episode to download \\(or tap \"Download All\"\\)\n"
-        "4️⃣ Receive the high\\-quality MP4 + subtitles automatically\n\n"
+        "3️⃣ Choose an episode to download \\(or tap \\\"Download All\\\"\\)\n"
+        "4️⃣ Receive the high\\-quality MP4 \\+ subtitles automatically\n\n"
         "📩 Contact *@THe_vK_3* if any problem or Query."
     )
-    update.message.reply_text(welcome_text, parse_mode="MarkdownV2", disable_web_page_preview=True)
+    update.message.reply_text(
+        welcome_text,
+        parse_mode="MarkdownV2",
+        disable_web_page_preview=True
+    )
 
 # ——————————————————————————————————————————————————————————————
 # 5) /search handler
