@@ -69,8 +69,19 @@ selected_anime_title = {}   # chat_id → title (so we can refer back to it)
 # ——————————————————————————————————————————————————————————————
 def start(update: Update, context: CallbackContext):
     update.message.reply_text(
-        "👋 Hello! Use /search <anime name> to find episodes on hianimez.to.\n"
-        "After selecting an episode, I will download the SUB-HD2 video and send it as a document."
+        "🌸 *AniDL Bot* 🌸\n\n"
+        "🔍 *Find & Download Anime Episodes*\n\n"
+        "🎯 *What I Can Do:*\n"
+        "• Search for your favorite anime on hianimez.to\n"
+        "• Download SUB-HD2 video as high-quality MP4\n"
+        "• Include English subtitles (SRT/VTT)\n"
+        "• Send everything as a document (no quality loss)\n\n"
+        "📝 *How to Use:*\n"
+        "1️⃣ `/search <anime name>` – Find anime titles\n"
+        "2️⃣ Select the anime from the list of results\n"
+        "3️⃣ Choose an episode to download (or tap “Download All”)\n"
+        "4️⃣ Receive the high-quality MP4 + subtitles automatically\n\n"
+        "ℹ️ Type `/help` for more information or support"
     )
 
 # ——————————————————————————————————————————————————————————————
