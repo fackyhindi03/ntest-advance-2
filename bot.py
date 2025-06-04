@@ -4,14 +4,25 @@
 import os
 import logging
 from flask import Flask, request
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ParseMode
+from telegram import (
+    Bot,
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputFile,
+    ParseMode,
+)
 from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, CallbackContext
 
-from hianimez_scraper import search_anime, get_episodes_list, extract_episode_stream_and_subtitle
+from hianimez_scraper import (
+    search_anime,
+    get_episodes_list,
+    extract_episode_stream_and_subtitle,
+)
 from utils import download_and_rename_subtitle
 
 # ——————————————————————————————————————————————————————————————
-# 1) Load required environment variables
+# 1) Load environment variables
 # ——————————————————————————————————————————————————————————————
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TELEGRAM_TOKEN:
@@ -19,15 +30,18 @@ if not TELEGRAM_TOKEN:
 
 KOYEB_APP_URL = os.getenv("KOYEB_APP_URL")
 if not KOYEB_APP_URL:
-    raise RuntimeError("KOYEB_APP_URL environment variable is not set. It must be your bot’s public HTTPS URL (no trailing slash).")
+    raise RuntimeError(
+        "KOYEB_APP_URL environment variable is not set. It must be your bot’s public HTTPS URL (no trailing slash)."
+    )
 
 ANIWATCH_API_BASE = os.getenv("ANIWATCH_API_BASE")
 if not ANIWATCH_API_BASE:
-    raise RuntimeError("ANIWATCH_API_BASE environment variable is not set. It should be your AniWatch API URL.")
-
+    raise RuntimeError(
+        "ANIWATCH_API_BASE environment variable is not set. It should be your AniWatch API URL."
+    )
 
 # ——————————————————————————————————————————————————————————————
-# 2) Initialize Telegram Bot + Dispatcher (with worker threads)
+# 2) Initialize Bot + Dispatcher
 # ——————————————————————————————————————————————————————————————
 bot = Bot(token=TELEGRAM_TOKEN)
 dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
@@ -37,9 +51,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ——————————————————————————————————————————————————————————————
+# 3) In‐memory caches for “search results” and “episode lists” per chat
+#    Keyed by chat_id so each user has their own list.
+# ——————————————————————————————————————————————————————————————
+#    WARNING: This is a simple in‐memory cache. It works as long as your bot process stays alive.
+#    If you restart the bot, the cache is cleared. If you want persistence across restarts, you’d
+#    need something like Redis, but that’s beyond our scope here.
+# ——————————————————————————————————————————————————————————————
+search_cache = {}   # chat_id → list of (title, slug)
+episode_cache = {}  # chat_id → list of (ep_num, ep_slug)
+
 
 # ——————————————————————————————————————————————————————————————
-# 3) /start handler
+# 4) /start handler
 # ——————————————————————————————————————————————————————————————
 def start(update: Update, context: CallbackContext):
     update.message.reply_text(
@@ -50,13 +75,16 @@ def start(update: Update, context: CallbackContext):
 
 
 # ——————————————————————————————————————————————————————————————
-# 4) /search handler (builds anime buttons with slug only)
+# 5) /search handler
+#    Stores (title, slug) pairs in search_cache[chat_id], and sends back an InlineKeyboard
+#    whose callback_data is “anime_idx:0”, “anime_idx:1”, etc.
 # ——————————————————————————————————————————————————————————————
 def search_command(update: Update, context: CallbackContext):
     if len(context.args) == 0:
         update.message.reply_text("Please provide an anime name. Example: /search Naruto")
         return
 
+    chat_id = update.effective_chat.id
     query = " ".join(context.args).strip()
     msg = update.message.reply_text(f"🔍 Searching for \"{query}\"…")
 
@@ -71,25 +99,50 @@ def search_command(update: Update, context: CallbackContext):
         msg.edit_text(f"No anime found matching \"{query}\".")
         return
 
+    # Save the (title, slug) list in memory, keyed by chat_id
+    # results is a list of tuples: (title, anime_url, slug)
+    # We only need title & slug, so convert each to (title, slug)
+    search_cache[chat_id] = [(title, slug) for title, anime_url, slug in results]
+
     buttons = []
-    for title, anime_url, slug in results:
-        # Only send the slug in callback_data
-        buttons.append([InlineKeyboardButton(title, callback_data=f"anime:{slug}")])
+    for idx, (title, slug) in enumerate(search_cache[chat_id]):
+        # callback_data = "anime_idx:<index>"
+        buttons.append(
+            [InlineKeyboardButton(title, callback_data=f"anime_idx:{idx}")]
+        )
 
     reply_markup = InlineKeyboardMarkup(buttons)
     msg.edit_text("Select the anime you want:", reply_markup=reply_markup)
 
 
 # ——————————————————————————————————————————————————————————————
-# 5) Callback when user taps an anime button (just the slug)
+# 6) anime_idx callback handler
+#    Looks up search_cache[chat_id][idx] to get slug, rebuilds the full URL,
+#    fetches episodes, stores (ep_num, ep_slug) in episode_cache[chat_id], and
+#    sends back buttons “Episode 1”, “Episode 2”, etc., each with callback_data “episode_idx:<i>”
 # ——————————————————————————————————————————————————————————————
 def anime_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
-    # Parse the <slug> out of "anime:<slug>"
-    _, slug = query.data.split(":", maxsplit=1)
+    chat_id = query.message.chat.id
+    data = query.data  # something like "anime_idx:3"
+    try:
+        _, idx_str = data.split(":", maxsplit=1)
+        idx = int(idx_str)
+    except:
+        query.edit_message_text("❌ Internal error: invalid anime selection.")
+        return
+
+    anime_list = search_cache.get(chat_id, [])
+    if idx < 0 or idx >= len(anime_list):
+        query.edit_message_text("❌ Internal error: anime index out of range.")
+        return
+
+    title, slug = anime_list[idx]
     anime_url = f"https://hianimez.to/watch/{slug}"
+
+    msg = query.edit_message_text(f"🔍 Fetching episodes for *{title}*…", parse_mode=ParseMode.MARKDOWN_V2)
 
     try:
         episodes = get_episodes_list(anime_url)
@@ -102,12 +155,17 @@ def anime_callback(update: Update, context: CallbackContext):
         query.edit_message_text("No episodes found for that anime.")
         return
 
-    buttons = []
+    # Store (ep_num, ep_slug) in memory
+    # episodes is a list of tuples (ep_num, ep_url), so turn into (ep_num, ep_slug)
+    episode_cache[chat_id] = []
     for ep_num, ep_url in episodes:
-        # Extract just the <ep_slug> from the full URL
         ep_slug = ep_url.rstrip("/").split("/")[-1]
+        episode_cache[chat_id].append((ep_num, ep_slug))
+
+    buttons = []
+    for i, (ep_num, ep_slug) in enumerate(episode_cache[chat_id]):
         buttons.append(
-            [InlineKeyboardButton(f"Episode {ep_num}", callback_data=f"episode:{ep_slug}")]
+            [InlineKeyboardButton(f"Episode {ep_num}", callback_data=f"episode_idx:{i}")]
         )
 
     reply_markup = InlineKeyboardMarkup(buttons)
@@ -115,21 +173,31 @@ def anime_callback(update: Update, context: CallbackContext):
 
 
 # ——————————————————————————————————————————————————————————————
-# 6) Callback when user taps an episode button (just the episode slug)
+# 7) episode_idx callback handler
+#    Looks up episode_cache[chat_id][idx] to get (ep_num, ep_slug), reconstructs
+#    the full episode URL (“https://hianimez.to/watch/<ep_slug>”), then calls
+#    extract_episode_stream_and_subtitle, downloads/renames the .vtt, and sends both.
 # ——————————————————————————————————————————————————————————————
 def episode_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
-    # Parse <ep_slug> from "episode:<ep_slug>"
-    _, ep_slug = query.data.split(":", maxsplit=1)
-    ep_url = f"https://hianimez.to/watch/{ep_slug}"
-
-    # Extract the numeric part after "-episode-" for logging
+    chat_id = query.message.chat.id
+    data = query.data  # something like "episode_idx:5"
     try:
-        ep_num = ep_slug.split("-episode-")[-1]
-    except Exception:
-        ep_num = "?"
+        _, idx_str = data.split(":", maxsplit=1)
+        idx = int(idx_str)
+    except:
+        query.edit_message_text("❌ Internal error: invalid episode selection.")
+        return
+
+    ep_list = episode_cache.get(chat_id, [])
+    if idx < 0 or idx >= len(ep_list):
+        query.edit_message_text("❌ Internal error: episode index out of range.")
+        return
+
+    ep_num, ep_slug = ep_list[idx]
+    ep_url = f"https://hianimez.to/watch/{ep_slug}"
 
     msg = query.edit_message_text(
         f"🔄 Retrieving SUB HD-2 (1080p) link and English subtitle for Episode {ep_num}…"
@@ -183,7 +251,7 @@ def episode_callback(update: Update, context: CallbackContext):
 
 
 # ——————————————————————————————————————————————————————————————
-# 7) Error handler
+# 8) Error handler
 # ——————————————————————————————————————————————————————————————
 def error_handler(update: object, context: CallbackContext):
     logger.error("Exception while handling an update:", exc_info=context.error)
@@ -194,13 +262,13 @@ def error_handler(update: object, context: CallbackContext):
 # Register all handlers
 dispatcher.add_handler(CommandHandler("start", start))
 dispatcher.add_handler(CommandHandler("search", search_command))
-dispatcher.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime:"))
-dispatcher.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode:"))
+dispatcher.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime_idx:"))
+dispatcher.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode_idx:"))
 dispatcher.add_error_handler(error_handler)
 
 
 # ——————————————————————————————————————————————————————————————
-# 8) Flask app for webhook + health check
+# 9) Flask app for webhook + health check
 # ——————————————————————————————————————————————————————————————
 app = Flask(__name__)
 
@@ -217,7 +285,7 @@ def health_check():
 
 
 # ——————————————————————————————————————————————————————————————
-# 9) On startup, set Telegram webhook to <KOYEB_APP_URL>/webhook
+# 10) On startup, set Telegram webhook to <KOYEB_APP_URL>/webhook
 # ——————————————————————————————————————————————————————————————
 if __name__ == "__main__":
     webhook_url = f"{KOYEB_APP_URL}/webhook"
