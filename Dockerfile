@@ -26,6 +26,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 5) Copy application code
+COPY .env .
 COPY bot.py .
 COPY utils.py .
 COPY hianimez_scraper.py .
