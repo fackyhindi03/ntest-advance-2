@@ -332,7 +332,8 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
     2) Use ffmpeg to download the raw MP4.
     3) Send the MP4 as a document via Telethon (MTProto).
     4) Once that completes, send the subtitle (.vtt) via Bot API.
-    5) If any step fails, fallback to sending the HLS link + subtitle.
+    5) Delete the status messages after both upload steps.
+    6) If any step fails, fallback to sending the HLS link + subtitle.
     """
     # Step 1: Extract HLS + subtitle URL
     try:
@@ -359,21 +360,22 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         if subtitle_url:
             try:
                 local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
-                bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt”.")
-                with open(local_vtt, "rb") as f:
-                    bot.send_document(
-                        chat_id=chat_id,
-                        document=InputFile(f, filename=f"Episode {ep_num}.vtt"),
-                        caption=f"Here is the subtitle for Episode {ep_num}.",
-                    )
+                status_sub = bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt”.")
+                bot.send_document(
+                    chat_id=chat_id,
+                    document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
+                    caption=f"Here is the subtitle for Episode {ep_num}.",
+                )
                 os.remove(local_vtt)
+                # Delete the subtitle status message immediately
+                bot.delete_message(chat_id=chat_id, message_id=status_sub.message_id)
             except Exception as se:
                 logger.error(f"[Thread] Error sending subtitle (Episode {ep_num}): {se}", exc_info=True)
                 bot.send_message(chat_id, f"⚠️ Could not download/send subtitle for Episode {ep_num}.")
         return
 
     # Step 3: Send the MP4 as a document via Telethon
-    bot.send_message(chat_id, f"📦 Sending full-quality Episode {ep_num} (as document) via Telethon…")
+    status_video = bot.send_message(chat_id, f"📦 Sending full-quality Episode {ep_num} (as document) via Telethon…")
     try:
         asyncio.run(telethon_send_file(
             chat_id=chat_id,
@@ -391,17 +393,20 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         if subtitle_url:
             try:
                 local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
-                bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt.”")
-                with open(local_vtt, "rb") as f:
-                    bot.send_document(
-                        chat_id=chat_id,
-                        document=InputFile(f, filename=f"Episode {ep_num}.vtt"),
-                        caption=f"Here is the subtitle for Episode {ep_num}."
-                    )
+                status_sub = bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt.”")
+                bot.send_document(
+                    chat_id=chat_id,
+                    document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
+                    caption=f"Here is the subtitle for Episode {ep_num}."
+                )
                 os.remove(local_vtt)
+                # Delete the subtitle status message immediately
+                bot.delete_message(chat_id=chat_id, message_id=status_sub.message_id)
             except Exception as se:
                 logger.error(f"[Thread] Error sending subtitle (Episode {ep_num}): {se}", exc_info=True)
                 bot.send_message(chat_id, f"⚠️ Could not download/send subtitle for Episode {ep_num}.")
+        # Delete the video status message even if it failed
+        bot.delete_message(chat_id=chat_id, message_id=status_video.message_id)
         return
     finally:
         # Clean up the raw MP4 from disk once Telethon is done
@@ -413,6 +418,8 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
     # Step 4: Now that the video‐as‐document is uploaded, send the subtitle via Bot API
     if not subtitle_url:
         bot.send_message(chat_id, "❗ No English subtitle (.vtt) found.")
+        # Delete the video status message now that it's done
+        bot.delete_message(chat_id=chat_id, message_id=status_video.message_id)
         return
 
     try:
@@ -420,16 +427,17 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
     except Exception as e:
         logger.error(f"[Thread] Error downloading subtitle (Episode {ep_num}): {e}", exc_info=True)
         bot.send_message(chat_id, f"⚠️ Found a subtitle URL but failed to download for Episode {ep_num}.")
+        # Delete the video status message now that it's done
+        bot.delete_message(chat_id=chat_id, message_id=status_video.message_id)
         return
 
-    bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt.”")
+    status_sub = bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt.”")
     try:
-        with open(local_vtt, "rb") as f:
-            bot.send_document(
-                chat_id=chat_id,
-                document=InputFile(f, filename=f"Episode {ep_num}.vtt"),
-                caption=f"Here is the subtitle for Episode {ep_num}."
-            )
+        bot.send_document(
+            chat_id=chat_id,
+            document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
+            caption=f"Here is the subtitle for Episode {ep_num}."
+        )
     except Exception as e:
         logger.error(f"[Thread] Error sending subtitle (Episode {ep_num}): {e}", exc_info=True)
         bot.send_message(chat_id, f"⚠️ Could not send subtitle for Episode {ep_num}.")
@@ -438,6 +446,10 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
             os.remove(local_vtt)
         except OSError:
             pass
+
+    # Step 5: Delete the status messages for both video and subtitle
+    bot.delete_message(chat_id=chat_id, message_id=status_video.message_id)
+    bot.delete_message(chat_id=chat_id, message_id=status_sub.message_id)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 10) Background task for “Download All” episodes (video first as document, then subtitle)
@@ -449,7 +461,8 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
       2) Download raw MP4
       3) Send raw MP4 as document via Telethon
       4) Send subtitle via Bot API
-      5) If any step fails, fallback to HLS link + subtitle
+      5) Delete the status messages after each upload
+      6) If any step fails, fallback to HLS link + subtitle
     """
     for ep_num, episode_id in ep_list:
         # (a) Extract HLS + subtitle
@@ -476,20 +489,21 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
             if subtitle_url:
                 try:
                     local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
-                    bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt.”")
+                    status_sub = bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt.”")
                     bot.send_document(
                         chat_id=chat_id,
                         document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
                         caption=f"Here is the subtitle for Episode {ep_num}."
                     )
                     os.remove(local_vtt)
+                    bot.delete_message(chat_id=chat_id, message_id=status_sub.message_id)
                 except Exception as se:
                     logger.error(f"[Thread] Error sending subtitle (Episode {ep_num}): {se}", exc_info=True)
                     bot.send_message(chat_id, f"⚠️ Could not send subtitle for Episode {ep_num}.")
             continue
 
         # (c) Send raw MP4 as document via Telethon
-        bot.send_message(chat_id, f"📦 Sending full‐quality Episode {ep_num} via Telethon as document…")
+        status_video = bot.send_message(chat_id, f"📦 Sending full‐quality Episode {ep_num} via Telethon as document…")
         try:
             asyncio.run(telethon_send_file(
                 chat_id=chat_id,
@@ -506,16 +520,18 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
             if subtitle_url:
                 try:
                     local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
-                    bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt.”")
+                    status_sub = bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt.”")
                     bot.send_document(
                         chat_id=chat_id,
                         document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
                         caption=f"Here is the subtitle for Episode {ep_num}."
                     )
                     os.remove(local_vtt)
+                    bot.delete_message(chat_id=chat_id, message_id=status_sub.message_id)
                 except Exception as se:
                     logger.error(f"[Thread] Error sending subtitle (Episode {ep_num}): {se}", exc_info=True)
                     bot.send_message(chat_id, f"⚠️ Could not send subtitle for Episode {ep_num}.")
+            bot.delete_message(chat_id=chat_id, message_id=status_video.message_id)
             continue
         finally:
             try:
@@ -526,6 +542,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
         # (d) Send subtitle
         if not subtitle_url:
             bot.send_message(chat_id, f"❗ No English subtitle found for Episode {ep_num}.")
+            bot.delete_message(chat_id=chat_id, message_id=status_video.message_id)
             continue
 
         try:
@@ -533,16 +550,16 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
         except Exception as e:
             logger.error(f"[Thread] Error downloading subtitle (Episode {ep_num}): {e}", exc_info=True)
             bot.send_message(chat_id, f"⚠️ Could not download subtitle for Episode {ep_num}.")
+            bot.delete_message(chat_id=chat_id, message_id=status_video.message_id)
             continue
 
-        bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt.”")
+        status_sub = bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt.”")
         try:
-            with open(local_vtt, "rb") as sub_f:
-                bot.send_document(
-                    chat_id=chat_id,
-                    document=InputFile(sub_f, filename=f"Episode {ep_num}.vtt"),
-                    caption=f"Here is the subtitle for Episode {ep_num}."
-                )
+            bot.send_document(
+                chat_id=chat_id,
+                document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
+                caption=f"Here is the subtitle for Episode {ep_num}."
+            )
         except Exception as e:
             logger.error(f"[Thread] Error sending subtitle (Episode {ep_num}): {e}", exc_info=True)
             bot.send_message(chat_id, f"⚠️ Could not send subtitle for Episode {ep_num}.")
@@ -551,6 +568,10 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
                 os.remove(local_vtt)
             except OSError:
                 pass
+
+        # (e) Delete the status messages for both video and subtitle
+        bot.delete_message(chat_id=chat_id, message_id=status_video.message_id)
+        bot.delete_message(chat_id=chat_id, message_id=status_sub.message_id)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 11) Error handler
