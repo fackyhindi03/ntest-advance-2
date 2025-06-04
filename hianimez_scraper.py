@@ -14,7 +14,7 @@ ANIWATCH_API_BASE = os.getenv(
 
 def search_anime(query: str):
     """
-    (unchanged)
+    (Unchanged from before.)
     """
     url = f"{ANIWATCH_API_BASE}/search"
     params = {"q": query, "page": 1}
@@ -48,13 +48,13 @@ def search_anime(query: str):
 
 def get_episodes_list(anime_url: str):
     """
-    Given a HiAnime URL (e.g. "https://hianimez.to/watch/naruto-677"), extract the slug ("naruto-677"),
-    then call AniWatch's /episode/list?animeId=<slug>.
+    Given a HiAnime page URL (e.g. "https://hianimez.to/watch/raven-of-the-inner-palace-18168"),
+    extract slug = "raven-of-the-inner-palace-18168", then call:
+      GET /episode/list?animeId=<slug>
 
-    If AniWatch returns 404, treat it as a single‐episode anime, and return [("1", slug)].
+    If that returns 404, treat it as a single-episode anime and return [("1", anime_url)].
     Otherwise, parse the JSON array and return a sorted list of (episode_number, episode_url).
     """
-    # 1) Extract the slug itself from the URL
     try:
         slug = anime_url.rstrip("/").split("/")[-1]
     except Exception:
@@ -67,15 +67,12 @@ def get_episodes_list(anime_url: str):
         resp = requests.get(ep_list_url, params=params, timeout=10)
         resp.raise_for_status()
     except requests.exceptions.HTTPError as http_err:
-        # If it's a 404, assume "movie"/"OVA"/"special" → single episode
         if resp.status_code == 404:
-            # Return a single‐episode list: episode "1" maps back to the same slug
+            # Single-episode fallback: return exactly one entry, Episode 1
             return [("1", anime_url)]
         else:
-            # re‐raise for any other HTTP error (e.g. 500)
             raise
 
-    # 2) If we did get a 200, parse the JSON array under "data"
     episodes_data = resp.json().get("data", [])
     episodes = []
     for item in episodes_data:
@@ -86,29 +83,36 @@ def get_episodes_list(anime_url: str):
         ep_url = f"https://hianimez.to/watch/{ep_slug}"
         episodes.append((ep_num, ep_url))
 
-    # 3) Sort by numeric episode number
     episodes.sort(key=lambda x: int(x[0]))
     return episodes
 
 
-def extract_episode_stream_and_subtitle(episode_url: str):
+def extract_episode_stream_and_subtitle(ep_slug: str, ep_num: str):
     """
-    (unchanged from before)
-    """
-    try:
-        path = episode_url.rstrip("/").split("/")[-1]
-        if "-episode-" in path:
-            anime_slug, ep_num = path.split("-episode-", maxsplit=1)
-            ep_id = f"{anime_slug}?ep={ep_num}"
-        else:
-            ep_id = path
-    except Exception:
-        return None, None
+    Given:
+      ep_slug = e.g. "raven-of-the-inner-palace-18168-episode-1"  (or sometimes just "raven-of-the-inner-palace-18168")
+      ep_num  = e.g. "1"
 
+    Build:
+      anime_slug = ep_slug.split("-episode-")[0]    → "raven-of-the-inner-palace-18168"
+      animeEpisodeId = f"{anime_slug}?ep={ep_num}"
+
+    Then call:
+      GET /episode/sources?animeEpisodeId=<animeEpisodeId>&server=hd-1&category=sub
+
+    Finally, return (hls_1080p_url, english_vtt_url) or (None, None).
+    """
+    # Determine the base "anime_slug" even if ep_slug doesn't contain "-episode-"
+    if "-episode-" in ep_slug:
+        anime_slug = ep_slug.split("-episode-")[0]
+    else:
+        anime_slug = ep_slug
+
+    ep_id = f"{anime_slug}?ep={ep_num}"
     url = f"{ANIWATCH_API_BASE}/episode/sources"
     params = {
         "animeEpisodeId": ep_id,
-        "server": "hd-1",   # “hd-1” is the SUB server
+        "server": "hd-1",   # SUB server, inside which we look for "HD-2"
         "category": "sub"
     }
 
@@ -126,13 +130,13 @@ def extract_episode_stream_and_subtitle(episode_url: str):
             hls_1080p = s.get("file")
             break
     if not hls_1080p:
-        # fallback to the first HLS if HD-2 not found
+        # Fallback to the first HLS if no "HD-2" label
         for s in sources:
             if s.get("type") == "hls":
                 hls_1080p = s.get("file")
                 break
 
-    # 2) Find English subtitle track
+    # 2) Find the English subtitle track
     subtitle_url = None
     for t in tracks:
         if t.get("srclang", "").lower() == "en":
