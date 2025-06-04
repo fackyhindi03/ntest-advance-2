@@ -52,15 +52,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ——————————————————————————————————————————————————————————————
-# 3) In‐memory caches for “search results” and “episode lists” per chat
-#    Keyed by chat_id so each user has their own list.
+# 3) In-memory caches for search results & episode lists per chat
 # ——————————————————————————————————————————————————————————————
-#    WARNING: This is a simple in‐memory cache. It works as long as your bot process stays alive.
-#    If you restart the bot, the cache is cleared. If you want persistence across restarts, you’d
-#    need something like Redis, but that’s beyond our scope here.
-# ——————————————————————————————————————————————————————————————
-search_cache = {}   # chat_id → list of (title, slug)
-episode_cache = {}  # chat_id → list of (ep_num, ep_slug)
+search_cache = {}   # chat_id → [ (title, slug), … ]
+episode_cache = {}  # chat_id → [ (ep_num, ep_slug), … ]
 
 
 # ——————————————————————————————————————————————————————————————
@@ -76,8 +71,6 @@ def start(update: Update, context: CallbackContext):
 
 # ——————————————————————————————————————————————————————————————
 # 5) /search handler
-#    Stores (title, slug) pairs in search_cache[chat_id], and sends back an InlineKeyboard
-#    whose callback_data is “anime_idx:0”, “anime_idx:1”, etc.
 # ——————————————————————————————————————————————————————————————
 def search_command(update: Update, context: CallbackContext):
     if len(context.args) == 0:
@@ -99,34 +92,27 @@ def search_command(update: Update, context: CallbackContext):
         msg.edit_text(f"No anime found matching \"{query}\".")
         return
 
-    # Save the (title, slug) list in memory, keyed by chat_id
-    # results is a list of tuples: (title, anime_url, slug)
-    # We only need title & slug, so convert each to (title, slug)
+    # Store (title, slug) in search_cache[chat_id]
     search_cache[chat_id] = [(title, slug) for title, anime_url, slug in results]
 
     buttons = []
     for idx, (title, slug) in enumerate(search_cache[chat_id]):
-        # callback_data = "anime_idx:<index>"
-        buttons.append(
-            [InlineKeyboardButton(title, callback_data=f"anime_idx:{idx}")]
-        )
+        # callback_data = "anime_idx:<idx>"
+        buttons.append([InlineKeyboardButton(title, callback_data=f"anime_idx:{idx}")])
 
     reply_markup = InlineKeyboardMarkup(buttons)
     msg.edit_text("Select the anime you want:", reply_markup=reply_markup)
 
 
 # ——————————————————————————————————————————————————————————————
-# 6) anime_idx callback handler
-#    Looks up search_cache[chat_id][idx] to get slug, rebuilds the full URL,
-#    fetches episodes, stores (ep_num, ep_slug) in episode_cache[chat_id], and
-#    sends back buttons “Episode 1”, “Episode 2”, etc., each with callback_data “episode_idx:<i>”
+# 6) Callback when user taps an anime (anime_idx callback)
 # ——————————————————————————————————————————————————————————————
 def anime_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
     chat_id = query.message.chat.id
-    data = query.data  # something like "anime_idx:3"
+    data = query.data  # "anime_idx:<i>"
     try:
         _, idx_str = data.split(":", maxsplit=1)
         idx = int(idx_str)
@@ -142,7 +128,9 @@ def anime_callback(update: Update, context: CallbackContext):
     title, slug = anime_list[idx]
     anime_url = f"https://hianimez.to/watch/{slug}"
 
-    msg = query.edit_message_text(f"🔍 Fetching episodes for *{title}*…", parse_mode=ParseMode.MARKDOWN_V2)
+    msg = query.edit_message_text(
+        f"🔍 Fetching episodes for *{title}*…", parse_mode=ParseMode.MARKDOWN_V2
+    )
 
     try:
         episodes = get_episodes_list(anime_url)
@@ -155,8 +143,7 @@ def anime_callback(update: Update, context: CallbackContext):
         query.edit_message_text("No episodes found for that anime.")
         return
 
-    # Store (ep_num, ep_slug) in memory
-    # episodes is a list of tuples (ep_num, ep_url), so turn into (ep_num, ep_slug)
+    # Store (ep_num, ep_slug) in episode_cache[chat_id]
     episode_cache[chat_id] = []
     for ep_num, ep_url in episodes:
         ep_slug = ep_url.rstrip("/").split("/")[-1]
@@ -164,26 +151,21 @@ def anime_callback(update: Update, context: CallbackContext):
 
     buttons = []
     for i, (ep_num, ep_slug) in enumerate(episode_cache[chat_id]):
-        buttons.append(
-            [InlineKeyboardButton(f"Episode {ep_num}", callback_data=f"episode_idx:{i}")]
-        )
+        buttons.append([InlineKeyboardButton(f"Episode {ep_num}", callback_data=f"episode_idx:{i}")])
 
     reply_markup = InlineKeyboardMarkup(buttons)
     query.edit_message_text("Select an episode:", reply_markup=reply_markup)
 
 
 # ——————————————————————————————————————————————————————————————
-# 7) episode_idx callback handler
-#    Looks up episode_cache[chat_id][idx] to get (ep_num, ep_slug), reconstructs
-#    the full episode URL (“https://hianimez.to/watch/<ep_slug>”), then calls
-#    extract_episode_stream_and_subtitle, downloads/renames the .vtt, and sends both.
+# 7) Callback when user taps an episode (episode_idx callback)
 # ——————————————————————————————————————————————————————————————
 def episode_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
     chat_id = query.message.chat.id
-    data = query.data  # something like "episode_idx:5"
+    data = query.data  # "episode_idx:<i>"
     try:
         _, idx_str = data.split(":", maxsplit=1)
         idx = int(idx_str)
@@ -197,14 +179,13 @@ def episode_callback(update: Update, context: CallbackContext):
         return
 
     ep_num, ep_slug = ep_list[idx]
-    ep_url = f"https://hianimez.to/watch/{ep_slug}"
-
+    # Now call extract with (ep_slug, ep_num), not a full URL:
     msg = query.edit_message_text(
         f"🔄 Retrieving SUB HD-2 (1080p) link and English subtitle for Episode {ep_num}…"
     )
 
     try:
-        hls_link, subtitle_url = extract_episode_stream_and_subtitle(ep_url)
+        hls_link, subtitle_url = extract_episode_stream_and_subtitle(ep_slug, ep_num)
     except Exception as e:
         logger.error(f"Error extracting episode data: {e}", exc_info=True)
         query.edit_message_text(f"❌ Failed to extract data for Episode {ep_num}.")
