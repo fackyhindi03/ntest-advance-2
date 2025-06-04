@@ -5,6 +5,8 @@ import os
 import threading
 import logging
 import asyncio
+from dotenv import load_dotenv
+load_dotenv()
 
 import telegram
 from flask import Flask, request
