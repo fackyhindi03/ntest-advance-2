@@ -52,7 +52,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ——————————————————————————————————————————————————————————————
-# 3) In-memory caches for search results & episode lists per chat
+# 3) In‐memory caches for search results & episode lists per chat
 # ——————————————————————————————————————————————————————————————
 search_cache = {}   # chat_id → [ (title, slug), … ]
 episode_cache = {}  # chat_id → [ (ep_num, episode_id), … ]
@@ -156,9 +156,9 @@ def anime_callback(update: Update, context: CallbackContext):
     query.edit_message_text("Select an episode:", reply_markup=reply_markup)
 
 
-# ——————————————————————————————————————————————————————————————
+# ──────────────────────────────────────────────────────────────────────────────
 # 7) Callback when user taps an episode button (episode_idx)
-# ——————————————————————————————————————————————————————————————
+# ──────────────────────────────────────────────────────────────────────────────
 def episode_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
@@ -178,8 +178,9 @@ def episode_callback(update: Update, context: CallbackContext):
         return
 
     ep_num, episode_id = ep_list[idx]
+    # Let the user know we are working on it:
     msg = query.edit_message_text(
-        f"🔄 Retrieving SUB HD-2 (1080p) link and English subtitle for Episode {ep_num}…"
+        f"🔄 Retrieving SUB HD-2 (1080p) link and English subtitle for Episode {ep_num}..."
     )
 
     try:
@@ -189,38 +190,45 @@ def episode_callback(update: Update, context: CallbackContext):
         query.edit_message_text(f"❌ Failed to extract data for Episode {ep_num}.")
         return
 
+    # If we couldn’t find any HLS URL, bail out:
     if not hls_link:
         query.edit_message_text(f"😔 Could not find a SUB HD-2 (1080p) stream for Episode {ep_num}.")
         return
 
+    # Build a plain‐text response (no MarkdownV2 anywhere)
     text = (
-        f"🎬 *Episode {ep_num}*\n\n"
-        f"🔗 *1080p (SUB HD-2) HLS Link:* \n"
-        f"`{hls_link}`\n\n"
+        f"🎬 Episode {ep_num}\n\n"
+        f"1080p (SUB HD-2) HLS Link:\n"
+        f"{hls_link}\n\n"
     )
 
+    # If no English .vtt was found, just send the text so far:
     if not subtitle_url:
-        text += "❗ No English subtitle (.vtt) found.\n"
-        query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+        text += "❗ No English subtitle (.vtt) found."
+        query.message.reply_text(text)
         return
 
+    # Otherwise, attempt to download & rename the .vtt locally
     try:
         local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
     except Exception as e:
         logger.error(f"Error downloading/renaming subtitle: {e}", exc_info=True)
-        text += "⚠️ Found a subtitle URL, but failed to download it.\n"
-        query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+        text += "⚠️ Found a subtitle URL, but failed to download it."
+        query.message.reply_text(text)
         return
 
-    text += f"✅ English subtitle downloaded as `Episode {ep_num}.vtt`."
-    query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+    # Indicate that subtitle was downloaded
+    text += f"✅ English subtitle downloaded as \"Episode {ep_num}.vtt\"."
+    query.message.reply_text(text)
 
+    # Send the .vtt file
     with open(local_vtt, "rb") as f:
         query.message.reply_document(
             document=InputFile(f, filename=f"Episode {ep_num}.vtt"),
             caption=f"Here is the subtitle for Episode {ep_num}.",
         )
 
+    # Clean up the local .vtt
     try:
         os.remove(local_vtt)
     except OSError:
