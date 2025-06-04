@@ -230,7 +230,8 @@ def episode_callback(update: Update, context: CallbackContext):
     # Fetch the stored anime name (if it exists)
     anime_name = selected_anime_title.get(chat_id)
     if anime_name:
-        queued_text = f"⏳ *{anime_name} Episode {ep_num}* is downloading…You’ll receive it shortly😇"
+        queued_text = f"🔰*Details Of Anime*🔰\n\n🎬 *Name:-* {anime_name} \n
+        🔢 *Episode:-* {ep_num}"
     else:
         queued_text = f"⏳ Episode {ep_num} queued for download… You’ll receive it shortly."
 
@@ -272,7 +273,8 @@ def episodes_all_callback(update: Update, context: CallbackContext):
     # Fetch the stored anime name (if it exists)
     anime_name = selected_anime_title.get(chat_id)
     if anime_name:
-        queued_all_text = f"⏳ All episodes of *{anime_name}* is downloading…You’ll receive them one by one😇"
+        queued_all_text = f"🔰*Details Of Anime*🔰\n\n🎬 *Name:-* {anime_name} \n
+        🔢 *Episode:-* All "
     else:
         queued_all_text = "⏳ Queued all episodes for download… You’ll receive them one by one."
 
@@ -321,7 +323,7 @@ async def telethon_send_with_progress(chat_id: int, file_path: str, caption: str
             )
             elapsed_str = f"{int(elapsed//60)}m {int(elapsed%60)}s"
             text = (
-                "📤 Uploading File\n"
+                "📤 Uploading File\n\N"
                 f"📊Size: {uploaded_mb:.2f} MB of {total_mb:.2f} MB\n"
                 f"⚡️Speed: {speed:.2f} MB/s\n"
                 f"⏱️Time Elapsed: {elapsed_str}\n"
