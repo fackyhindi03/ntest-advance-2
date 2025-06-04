@@ -230,7 +230,7 @@ def episode_callback(update: Update, context: CallbackContext):
     # Fetch the stored anime name (if it exists)
     anime_name = selected_anime_title.get(chat_id)
     if anime_name:
-        queued_text = f"⏳ Queued *{anime_name}* Episode {ep_num} for download… You’ll receive it shortly."
+        queued_text = f"⏳ *{anime_name} Episode {ep_num}* is downloading…You’ll receive it shortly😇"
     else:
         queued_text = f"⏳ Episode {ep_num} queued for download… You’ll receive it shortly."
 
@@ -272,7 +272,7 @@ def episodes_all_callback(update: Update, context: CallbackContext):
     # Fetch the stored anime name (if it exists)
     anime_name = selected_anime_title.get(chat_id)
     if anime_name:
-        queued_all_text = f"⏳ Queued all episodes of *{anime_name}* for download… You’ll receive them one by one."
+        queued_all_text = f"⏳ All episodes of *{anime_name}* is downloading…You’ll receive them one by one😇"
     else:
         queued_all_text = "⏳ Queued all episodes for download… You’ll receive them one by one."
 
