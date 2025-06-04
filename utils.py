@@ -11,8 +11,7 @@ def download_and_rename_subtitle(subtitle_url: str, ep_num: str,
     """
     Fetches a .vtt subtitle from `subtitle_url` and saves it to:
         <cache_dir>/Episode <ep_num>.vtt
-
-    Returns the local file path. Raises on network errors.
+    Returns the local file path.
     """
     os.makedirs(cache_dir, exist_ok=True)
     local_filename = f"Episode {ep_num}.vtt"
@@ -32,7 +31,6 @@ def download_and_rename_video(hls_url: str, ep_num: str,
     """
     Uses ffmpeg to pull down an HLS stream (m3u8) and save as MP4:
         ffmpeg -i <hls_url> -c copy <cache_dir>/Episode <ep_num>.mp4
-
     Returns the local MP4 file path. Raises if ffmpeg fails.
     """
     os.makedirs(cache_dir, exist_ok=True)
@@ -48,7 +46,7 @@ def download_and_rename_video(hls_url: str, ep_num: str,
     ]
 
     try:
-        completed = subprocess.run(
+        subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -102,7 +100,7 @@ def transcode_to_telegram_friendly(input_path: str, ep_num: str,
     ]
 
     try:
-        completed = subprocess.run(
+        subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
