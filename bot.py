@@ -323,7 +323,7 @@ async def telethon_send_with_progress(chat_id: int, file_path: str, caption: str
             )
             elapsed_str = f"{int(elapsed//60)}m {int(elapsed%60)}s"
             text = (
-                "📤 Uploading File\n\N"
+                "📤 Uploading File\n\n"
                 f"📊Size: {uploaded_mb:.2f} MB of {total_mb:.2f} MB\n"
                 f"⚡️Speed: {speed:.2f} MB/s\n"
                 f"⏱️Time Elapsed: {elapsed_str}\n"
@@ -408,8 +408,7 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         eta_str = f"{int(eta_s//60)}m {int(eta_s%60)}s" if (eta_s is not None and eta_s >= 0) else "–"
 
         text = (
-            "📥 Downloading File\n"
-            
+            "📥 Downloading File\n\n"
             f"📊Size: {downloaded_mb:.2f} MB\n"
             f"⚡️Speed: {speed_mb_s:.2f} MB/s\n"
             f"⏱️Time Elapsed: {elapsed_str}\n"
