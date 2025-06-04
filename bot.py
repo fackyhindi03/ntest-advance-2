@@ -98,7 +98,11 @@ def search_command(update: Update, context: CallbackContext):
         buttons.append([InlineKeyboardButton(title, callback_data=f"anime_idx:{idx}")])
 
     reply_markup = InlineKeyboardMarkup(buttons)
-    msg.edit_text("Select the anime you want:", reply_markup=reply_markup)
+    try:
+        msg.edit_text("Select the anime you want:", reply_markup=reply_markup)
+    except telegram.error.BadRequest:
+        # If the text/markup is identical, ignore
+        pass
 
 # ——————————————————————————————————————————————————————————————
 # 6) Callback when user taps an anime button (anime_idx)
@@ -117,30 +121,45 @@ def anime_callback(update: Update, context: CallbackContext):
         _, idx_str = data.split(":", maxsplit=1)
         idx = int(idx_str)
     except Exception:
-        query.edit_message_text("❌ Internal error: invalid anime selection.")
+        try:
+            query.edit_message_text("❌ Internal error: invalid anime selection.")
+        except telegram.error.BadRequest:
+            pass
         return
 
     anime_list = search_cache.get(chat_id, [])
     if idx < 0 or idx >= len(anime_list):
-        query.edit_message_text("❌ Internal error: anime index out of range.")
+        try:
+            query.edit_message_text("❌ Internal error: anime index out of range.")
+        except telegram.error.BadRequest:
+            pass
         return
 
     title, slug = anime_list[idx]
     anime_url = f"https://hianimez.to/watch/{slug}"
 
-    msg = query.edit_message_text(
-        f"🔍 Fetching episodes for *{title}*…", parse_mode="MarkdownV2"
-    )
+    try:
+        query.edit_message_text(
+            f"🔍 Fetching episodes for *{title}*…", parse_mode="MarkdownV2"
+        )
+    except telegram.error.BadRequest:
+        pass
 
     try:
         episodes = get_episodes_list(anime_url)
     except Exception as e:
         logger.error(f"Error fetching episodes: {e}", exc_info=True)
-        query.edit_message_text("❌ Failed to retrieve episodes for that anime.")
+        try:
+            query.edit_message_text("❌ Failed to retrieve episodes for that anime.")
+        except telegram.error.BadRequest:
+            pass
         return
 
     if not episodes:
-        query.edit_message_text("No episodes found for that anime.")
+        try:
+            query.edit_message_text("No episodes found for that anime.")
+        except telegram.error.BadRequest:
+            pass
         return
 
     # Store (ep_num, episode_id) in episode_cache[chat_id]
@@ -157,7 +176,11 @@ def anime_callback(update: Update, context: CallbackContext):
     buttons.append([InlineKeyboardButton("Download All", callback_data="episode_all")])
 
     reply_markup = InlineKeyboardMarkup(buttons)
-    query.edit_message_text("Select an episode (or Download All):", reply_markup=reply_markup)
+    try:
+        query.edit_message_text("Select an episode (or Download All):", reply_markup=reply_markup)
+    except telegram.error.BadRequest:
+        # If unchanged, ignore
+        pass
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 7a) Callback when user taps a single episode button (episode_idx)
@@ -177,29 +200,44 @@ def episode_callback(update: Update, context: CallbackContext):
         _, idx_str = data.split(":", maxsplit=1)
         idx = int(idx_str)
     except Exception:
-        query.edit_message_text("❌ Internal error: invalid episode selection.")
+        try:
+            query.edit_message_text("❌ Internal error: invalid episode selection.")
+        except telegram.error.BadRequest:
+            pass
         return
 
     ep_list = episode_cache.get(chat_id, [])
     if idx < 0 or idx >= len(ep_list):
-        query.edit_message_text("❌ Internal error: episode index out of range.")
+        try:
+            query.edit_message_text("❌ Internal error: episode index out of range.")
+        except telegram.error.BadRequest:
+            pass
         return
 
     ep_num, episode_id = ep_list[idx]
 
     # 2) Let the user know we are working on it
-    query.edit_message_text(f"🔄 Retrieving Episode {ep_num} (SUB-HD2 Video + subtitle)…")
+    try:
+        query.edit_message_text(f"🔄 Retrieving Episode {ep_num} (SUB-HD2 Video + subtitle)…")
+    except telegram.error.BadRequest:
+        pass
 
     # 3) Extract HLS link + subtitle URL
     try:
         hls_link, subtitle_url = extract_episode_stream_and_subtitle(episode_id)
     except Exception as e:
         logger.error(f"Error extracting episode data: {e}", exc_info=True)
-        query.edit_message_text(f"❌ Failed to extract data for Episode {ep_num}.")
+        try:
+            query.edit_message_text(f"❌ Failed to extract data for Episode {ep_num}.")
+        except telegram.error.BadRequest:
+            pass
         return
 
     if not hls_link:
-        query.edit_message_text(f"😔 Could not find a SUB-HD2 Video stream for Episode {ep_num}.")
+        try:
+            query.edit_message_text(f"😔 Could not find a SUB-HD2 Video stream for Episode {ep_num}.")
+        except telegram.error.BadRequest:
+            pass
         return
 
     # 4) Download the actual MP4 from the HLS link
@@ -286,13 +324,19 @@ def episodes_all_callback(update: Update, context: CallbackContext):
 
     ep_list = episode_cache.get(chat_id, [])
     if not ep_list:
-        query.edit_message_text("❌ No episodes available to download.")
+        try:
+            query.edit_message_text("❌ No episodes available to download.")
+        except telegram.error.BadRequest:
+            pass
         return
 
     # 2) Inform user that all downloads are starting
-    query.edit_message_text(
-        "🔄 Downloading all episodes (SUB-HD2 Video + subtitle)… This may take a while."
-    )
+    try:
+        query.edit_message_text(
+            "🔄 Downloading all episodes (SUB-HD2 Video + subtitle)… This may take a while."
+        )
+    except telegram.error.BadRequest:
+        pass
 
     # 3) Loop through each episode
     for ep_num, episode_id in ep_list:
