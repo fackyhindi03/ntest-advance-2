@@ -136,7 +136,7 @@ def search_command(update: Update, context: CallbackContext):
         return
 
     if len(context.args) == 0:
-        update.message.reply_text("Please provide an anime name. Example:\n/search Naruto")
+        update.message.reply_text("Please provide an anime name.\nExample: /search Naruto")
         return
 
     query_text = " ".join(context.args).strip()
