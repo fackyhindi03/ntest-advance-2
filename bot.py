@@ -552,44 +552,28 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         except Exception:
             pass
 
-    try:
-        raw_mp4 = download_and_rename_video(
-            hls_link,
-            ep_num,
-            cache_dir="videos_cache",
-            progress_callback=download_progress_cb
-        )
-    except Exception as e:
-        logger.error(f"[Thread] Error downloading video (Episode {ep_num}): {e}", exc_info=True)
-        # If ffmpeg fails, delete the “Downloading File” status and send fallback
-        try:
-            bot.delete_message(chat_id=chat_id, message_id=status_download.message_id)
-        except Exception:
-            pass
-
+    # Attempt to convert HLS → MP4. If ffmpeg/ffprobe are missing or fail, video_path will be None.
+    raw_mp4 = download_and_rename_video(
+        hls_link,
+        ep_num,
+        cache_dir="videos_cache",
+        progress_callback=download_progress_cb
+    )
+    if raw_mp4 is None:
+        # Conversion failed or ffmpeg/ffprobe not available → send HLS link directly
         bot.send_message(
             chat_id,
-            f"⚠️ Failed to convert Episode {ep_num} to MP4. Here’s the HLS link instead:\n\n{hls_link}"
+            f"🔗 Cannot convert Episode {ep_num} to MP4. Here’s the HLS link instead:\n{hls_link}"
         )
         if subtitle_url:
-            try:
-                local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
-                status_sub = bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt”.")
-                bot.send_document(
-                    chat_id=chat_id,
-                    document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
-                    caption=f"Here is the subtitle for Episode {ep_num}"
-                )
-                os.remove(local_vtt)
-                try:
-                    bot.delete_message(chat_id=chat_id, message_id=status_sub.message_id)
-                except Exception:
-                    pass
-            except Exception as se:
-                logger.error(f"[Thread] Error sending subtitle (Episode {ep_num}): {se}", exc_info=True)
-                bot.send_message(chat_id, f"⚠️ Could not download/send subtitle for Episode {ep_num}.")
+            local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache")
+            bot.send_document(
+                chat_id=chat_id,
+                document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
+                caption=f"Here is the subtitle for Episode {ep_num}"
+            )
+            os.remove(local_vtt)
         return
-
     # Delete the “Downloading File” status message (100% download done)
     try:
         bot.delete_message(chat_id=chat_id, message_id=status_download.message_id)
