@@ -11,7 +11,7 @@ def download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cach
     os.makedirs(cache_dir, exist_ok=True)
     local_filename = os.path.join(cache_dir, f"Episode {ep_num}.vtt")
 
-    # Stream-download via requests
+    # Stream‐download via requests
     response = requests.get(subtitle_url, stream=True, timeout=30)
     response.raise_for_status()
 
@@ -33,7 +33,8 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
     os.makedirs(cache_dir, exist_ok=True)
     output_path = os.path.join(cache_dir, f"Episode {ep_num}.mp4")
 
-    # 1) Use ffprobe to get total duration (in seconds)
+    # 1) Try ffprobe to get total duration (in seconds)
+    duration = None
     try:
         cmd_probe = [
             "ffprobe",
@@ -50,8 +51,12 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
             timeout=15
         )
         duration = float(result.stdout.strip())
-    except Exception as e:
-        raise RuntimeError(f"Failed to get duration via ffprobe: {e}")
+    except FileNotFoundError as e:
+        # ffprobe not installed; skip duration-based percentage
+        duration = None
+    except Exception:
+        # Any ffprobe error—skip percentage-based progress
+        duration = None
 
     # 2) Run ffmpeg with "-progress pipe:1" to get periodic progress on stdout
     cmd_ffmpeg = [
@@ -77,7 +82,7 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
     while True:
         line = proc.stdout.readline()
         if not line:
-            # If process ended, break
+            # If process has ended, break
             if proc.poll() is not None:
                 break
             continue
@@ -88,14 +93,17 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
         key, val = line.split("=", 1)
 
         if key == "out_time_ms":
-            # out_time_ms is the number of microseconds of video already processed
+            # out_time_ms is microseconds of video processed so far
             try:
                 out_time_ms = int(val)
             except ValueError:
                 continue
 
             current_time_s = out_time_ms / 1e6
-            percent = (current_time_s / duration) * 100 if duration > 0 else 0
+            if duration is not None and duration > 0:
+                percent = (current_time_s / duration) * 100
+            else:
+                percent = None
 
             # Check file size so far
             try:
@@ -107,15 +115,18 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
             elapsed = time.time() - start_time
             speed = downloaded_mb / elapsed if elapsed > 0 else 0
 
-            # ETA = elapsed × (100 – percent) / percent
-            eta = (elapsed * (100 - percent) / percent) if percent > 0 else None
+            # ETA only if percent is known
+            if percent is not None and percent > 0:
+                eta = (elapsed * (100 - percent) / percent)
+            else:
+                eta = None
 
             if progress_callback:
-                # Report: downloaded_mb, total_duration_s, percent, speed_mb_s, elapsed_s, eta_s
+                # Report: downloaded_mb, total_duration_s (or None), percent (or None), speed_mb_s, elapsed_s, eta_s (or None)
                 progress_callback(downloaded_mb, duration, percent, speed, elapsed, eta)
 
         elif key == "progress" and val == "end":
-            # Reached the end of encoding → report 100% one final time
+            # Encoding finished → final 100% if duration known
             try:
                 size_bytes = os.path.getsize(output_path)
                 downloaded_mb = size_bytes / (1024 * 1024)
@@ -123,8 +134,8 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
                 downloaded_mb = downloaded_mb
             elapsed = time.time() - start_time
             speed = downloaded_mb / elapsed if elapsed > 0 else 0
-            percent = 100.0
-            eta = 0.0
+            percent = 100.0 if duration is not None else None
+            eta = 0.0 if duration is not None else None
 
             if progress_callback:
                 progress_callback(downloaded_mb, duration, percent, speed, elapsed, eta)
