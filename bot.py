@@ -463,7 +463,7 @@ async def telethon_send_with_progress(chat_id: int, file_path: str, caption: str
             )
             try:
                 bot.edit_message_text(
-                    text, chat_id=chat_id, message_id=status_message_id, parse_mode="MarkdownV2",
+                    text, chat_id=chat_id, message_id=status_message_id, parse_mode="MarkdownV2"
                 )
             except Exception:
                 pass
