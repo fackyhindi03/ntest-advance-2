@@ -2,7 +2,7 @@
 # bot.py
 
 from dotenv import load_dotenv
-load_dotenv() 
+load_dotenv()
 
 import os
 import threading
@@ -24,9 +24,12 @@ from utils import (
 # ——————————————————————————————————————————————————————————————
 # 0) ALLOW‐LIST CONFIGURATION
 # ——————————————————————————————————————————————————————————————
-# Replace 123456789 with your actual Telegram user ID (and add more IDs if needed)
+# Replace these numeric IDs with the actual Telegram user IDs you wish to allow.
 ALLOWED_USERS = {
     1423807625,
+    # You can add more IDs like:
+    # 123456789,
+    # 987654321,
 }
 
 DENIED_MESSAGE = (
@@ -88,7 +91,11 @@ def start(update: Update, context: CallbackContext):
 
     # Deny access if not in allow‐list
     if user_id not in ALLOWED_USERS:
-        update.message.reply_text(DENIED_MESSAGE, parse_mode="MarkdownV2", disable_web_page_preview=True)
+        update.message.reply_text(
+            DENIED_MESSAGE,
+            parse_mode="MarkdownV2",
+            disable_web_page_preview=True
+        )
         return
 
     welcome_text = (
@@ -121,7 +128,11 @@ def search_command(update: Update, context: CallbackContext):
 
     # Deny access if not in allow‐list
     if user_id not in ALLOWED_USERS:
-        update.message.reply_text(DENIED_MESSAGE, parse_mode="MarkdownV2", disable_web_page_preview=True)
+        update.message.reply_text(
+            DENIED_MESSAGE,
+            parse_mode="MarkdownV2",
+            disable_web_page_preview=True
+        )
         return
 
     if len(context.args) == 0:
@@ -167,7 +178,11 @@ def anime_callback(update: Update, context: CallbackContext):
     # Deny access if not in allow‐list
     if user_id not in ALLOWED_USERS:
         query.answer()
-        query.message.reply_text(DENIED_MESSAGE, parse_mode="MarkdownV2", disable_web_page_preview=True)
+        query.message.reply_text(
+            DENIED_MESSAGE,
+            parse_mode="MarkdownV2",
+            disable_web_page_preview=True
+        )
         return
 
     try:
@@ -200,8 +215,18 @@ def anime_callback(update: Update, context: CallbackContext):
 
     # Let the user know we’re fetching episodes:
     try:
+        # We can bold the title here because we know 'title' itself may contain underscores, etc.
+        title_escaped = (
+            title
+            .replace("_", "\\_")
+            .replace(".", "\\.")
+            .replace("(", "\\(")
+            .replace(")", "\\)")
+            .replace("-", "\\-")
+        )
         query.edit_message_text(
-            f"🔍 Fetching episodes for *{title}*…", parse_mode="MarkdownV2"
+            f"🔍 Fetching episodes for *{title_escaped}*…",
+            parse_mode="MarkdownV2"
         )
     except Exception:
         pass
@@ -249,7 +274,11 @@ def episode_callback(update: Update, context: CallbackContext):
     # Deny access if not in allow‐list
     if user_id not in ALLOWED_USERS:
         query.answer()
-        query.message.reply_text(DENIED_MESSAGE, parse_mode="MarkdownV2", disable_web_page_preview=True)
+        query.message.reply_text(
+            DENIED_MESSAGE,
+            parse_mode="MarkdownV2",
+            disable_web_page_preview=True
+        )
         return
 
     try:
@@ -281,22 +310,36 @@ def episode_callback(update: Update, context: CallbackContext):
     # Fetch the stored anime name (if it exists)
     anime_name = selected_anime_title.get(chat_id)
     if anime_name:
-        # Use plain text here (no Markdown) so we never fail an edit
-        queued_text = (
-            "🔰 *Details Of Anime* 🔰\n\n"
-            f"🎬 *Name:* {anime_name}\n"
-            f"🔢 *Episode:* {ep_num}"
+        # Escape any MarkdownV2‐reserved characters in the title
+        safe_name = (
+            anime_name
+            .replace("_", "\\_")
+            .replace(".", "\\.")
+            .replace("(", "\\(")
+            .replace(")", "\\)")
+            .replace("-", "\\-")
         )
+        details_text = (
+            "🔰 *Details Of Anime* 🔰\n\n"
+            "🎬 *Name:* " + safe_name + "\n"
+            "🔢 *Episode:* " + str(ep_num)
+        )
+        # Send it as MarkdownV2 so that *Details Of Anime* and *Name:* and *Episode:* are bold
+        try:
+            query.edit_message_text(details_text, parse_mode="MarkdownV2")
+        except Exception:
+            # In the unlikely event it still fails, fall back to plain text
+            fallback = f"Details Of Anime:\nName: {anime_name}\nEpisode: {ep_num}"
+            try:
+                query.edit_message_text(fallback)
+            except Exception:
+                pass
     else:
-        # Fallback plain‐text
         queued_text = f"⏳ Episode {ep_num} queued for download… You’ll receive it shortly."
-
-    try:
-        # Notice: no parse_mode so it’s just plain text
-        query.edit_message_text(queued_text)
-    except Exception:
-        # If something still fails, we at least continue
-        pass
+        try:
+            query.edit_message_text(queued_text)
+        except Exception:
+            pass
 
     # Start a background thread for (download → upload → subtitle)
     thread = threading.Thread(
@@ -318,7 +361,11 @@ def episodes_all_callback(update: Update, context: CallbackContext):
     # Deny access if not in allow‐list
     if user_id not in ALLOWED_USERS:
         query.answer()
-        query.message.reply_text(DENIED_MESSAGE, parse_mode="MarkdownV2", disable_web_page_preview=True)
+        query.message.reply_text(
+            DENIED_MESSAGE,
+            parse_mode="MarkdownV2",
+            disable_web_page_preview=True
+        )
         return
 
     try:
@@ -336,19 +383,33 @@ def episodes_all_callback(update: Update, context: CallbackContext):
 
     anime_name = selected_anime_title.get(chat_id)
     if anime_name:
-        queued_all_text = (
+        safe_name = (
+            anime_name
+            .replace("_", "\\_")
+            .replace(".", "\\.")
+            .replace("(", "\\(")
+            .replace(")", "\\)")
+            .replace("-", "\\-")
+        )
+        all_text = (
             "🔰 *Details Of Anime* 🔰\n\n"
-            f"🎬 *Name:* {anime_name}\n"
+            "🎬 *Name:* " + safe_name + "\n"
             "🔢 *Episode:* All"
         )
+        try:
+            query.edit_message_text(all_text, parse_mode="MarkdownV2")
+        except Exception:
+            fallback = f"Details Of Anime:\nName: {anime_name}\nEpisode: All"
+            try:
+                query.edit_message_text(fallback)
+            except Exception:
+                pass
     else:
         queued_all_text = "⏳ Queued all episodes for download… You’ll receive them one by one."
-
-    try:
-        # Again: plain text, no parse_mode
-        query.edit_message_text(queued_all_text)
-    except Exception:
-        pass
+        try:
+            query.edit_message_text(queued_all_text)
+        except Exception:
+            pass
 
     thread = threading.Thread(
         target=download_and_send_all_episodes,
@@ -498,7 +559,7 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
                 bot.send_document(
                     chat_id=chat_id,
                     document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
-                    caption=f"Here is the subtitle for Episode {ep_num}",
+                    caption=f"Here is the subtitle for Episode {ep_num}"
                 )
                 os.remove(local_vtt)
                 try:
@@ -596,7 +657,6 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         bot.delete_message(chat_id=chat_id, message_id=status_sub.message_id)
     except Exception:
         pass
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 10) Background task for “Download All” episodes (download→upload→subtitle)
