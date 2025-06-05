@@ -2,6 +2,7 @@ import os
 import subprocess
 import time
 import requests
+import shutil
 
 def download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache"):
     """
@@ -29,11 +30,16 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
     Reports progress via progress_callback(downloaded_mb, total_duration_s, percent, speed_mb_s, elapsed_s, eta_s).
 
     Returns the local file path "Episode {ep_num}.mp4".
+    If ffmpeg or ffprobe are missing, raises RuntimeError so caller can fallback to HLS link.
     """
     os.makedirs(cache_dir, exist_ok=True)
     output_path = os.path.join(cache_dir, f"Episode {ep_num}.mp4")
 
-    # 1) Try ffprobe to get total duration (in seconds)
+    # === STEP 1: Check if 'ffprobe' is available; if not, raise so caller can send HLS link ===
+    if shutil.which("ffprobe") is None:
+        raise RuntimeError("ffprobe not found")
+
+    # 1a) Use ffprobe to get total duration (in seconds)
     duration = None
     try:
         cmd_probe = [
@@ -51,12 +57,13 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
             timeout=15
         )
         duration = float(result.stdout.strip())
-    except FileNotFoundError as e:
-        # ffprobe not installed; skip duration-based percentage
+    except Exception as e:
+        # If any error during probing, treat as missing duration
         duration = None
-    except Exception:
-        # Any ffprobe error—skip percentage-based progress
-        duration = None
+
+    # === STEP 2: Check if 'ffmpeg' is available; if not, raise so caller can send HLS link ===
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("ffmpeg not found")
 
     # 2) Run ffmpeg with "-progress pipe:1" to get periodic progress on stdout
     cmd_ffmpeg = [
@@ -93,7 +100,7 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
         key, val = line.split("=", 1)
 
         if key == "out_time_ms":
-            # out_time_ms is microseconds of video processed so far
+            # out_time_ms is the number of microseconds of video processed so far
             try:
                 out_time_ms = int(val)
             except ValueError:
@@ -115,18 +122,19 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
             elapsed = time.time() - start_time
             speed = downloaded_mb / elapsed if elapsed > 0 else 0
 
-            # ETA only if percent is known
+            # ETA calculation only if we know percent
             if percent is not None and percent > 0:
                 eta = (elapsed * (100 - percent) / percent)
             else:
                 eta = None
 
             if progress_callback:
-                # Report: downloaded_mb, total_duration_s (or None), percent (or None), speed_mb_s, elapsed_s, eta_s (or None)
+                # Report: downloaded_mb, total_duration_s (or None), percent (or None),
+                # speed_mb_s, elapsed_s, eta_s (or None)
                 progress_callback(downloaded_mb, duration, percent, speed, elapsed, eta)
 
         elif key == "progress" and val == "end":
-            # Encoding finished → final 100% if duration known
+            # Reached the end of encoding → report 100% if duration known
             try:
                 size_bytes = os.path.getsize(output_path)
                 downloaded_mb = size_bytes / (1024 * 1024)
