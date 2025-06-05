@@ -1,6 +1,6 @@
 python-telegram-bot==13.12
 Flask==2.0.3
-requests==2.31.0
+requests==2.27.1
 cloudscraper==1.2.58
 beautifulsoup4==4.12.2
 lxml==4.9.3
