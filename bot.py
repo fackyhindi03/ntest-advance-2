@@ -12,7 +12,7 @@ import time
 
 
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
-
+from telegram.ext import CommandHandler, CallbackQueryHandler, CallbackContext
 
 from telethon import TelegramClient
 
