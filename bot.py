@@ -887,23 +887,22 @@ def error_handler(update: object, context: CallbackContext):
 # 14) On startup, set Telegram webhook to <KOYEB_APP_URL>/webhook
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Ensure our cache directories exist
+    # Ensure cache directories exist
     os.makedirs("subtitles_cache", exist_ok=True)
     os.makedirs("videos_cache", exist_ok=True)
 
     logger.info("Starting bot with polling…")
 
-    # Create an Updater & Dispatcher (re‐use the existing dispatcher)
     from telegram.ext import Updater
-
     updater = Updater(token=BOT_TOKEN, use_context=True)
-    updater.dispatcher = dispatcher
-    dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("search", search_command))
-dispatcher.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime_idx:"))
-dispatcher.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode_idx:"))
-dispatcher.add_handler(CallbackQueryHandler(episodes_all_callback, pattern=r"^episode_all$"))
-dispatcher.add_error_handler(error_handler)
-    # Start polling for updates
+
+    dp = updater.dispatcher
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("search", search_command))
+    dp.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime_idx:"))
+    dp.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode_idx:"))
+    dp.add_handler(CallbackQueryHandler(episodes_all_callback, pattern=r"^episode_all$"))
+    dp.add_error_handler(error_handler)
+
     updater.start_polling()
     updater.idle()
