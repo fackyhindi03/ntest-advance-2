@@ -21,6 +21,20 @@ from utils import (
 )
 
 # ——————————————————————————————————————————————————————————————
+# 0) ALLOW‐LIST CONFIGURATION
+# ——————————————————————————————————————————————————————————————
+# Replace 123456789 with your actual Telegram user ID (and add more IDs if needed)
+ALLOWED_USERS = {
+    123456789,
+}
+
+DENIED_MESSAGE = (
+    "🚫 *Access Denied!*  \n"
+    "You are not authorized to use this bot.  \n\n"
+    "📩 Contact @THe\\_vK\\_3 for access!"
+)
+
+# ——————————————————————————————————————————————————————————————
 # 1) Load environment variables
 # ——————————————————————————————————————————————————————————————
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -68,6 +82,14 @@ selected_anime_title = {}   # chat_id → title (so we can refer back to it)
 # 4) /start handler
 # ——————————————————————————————————————————————————————————————
 def start(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    # Deny access if not in allow‐list
+    if user_id not in ALLOWED_USERS:
+        update.message.reply_text(DENIED_MESSAGE, parse_mode="MarkdownV2", disable_web_page_preview=True)
+        return
+
     welcome_text = (
         "🌸 *Hianime Downloader* 🌸\n\n"
         "🔍 *Find \\& Download Anime Episodes Directly*\n\n"
@@ -93,7 +115,13 @@ def start(update: Update, context: CallbackContext):
 # 5) /search handler
 # ——————————————————————————————————————————————————————————————
 def search_command(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+
+    # Deny access if not in allow‐list
+    if user_id not in ALLOWED_USERS:
+        update.message.reply_text(DENIED_MESSAGE, parse_mode="MarkdownV2", disable_web_page_preview=True)
+        return
 
     if len(context.args) == 0:
         update.message.reply_text("Please provide an anime name. Example:\n/search Naruto")
@@ -132,7 +160,14 @@ def search_command(update: Update, context: CallbackContext):
 # ——————————————————————————————————————————————————————————————
 def anime_callback(update: Update, context: CallbackContext):
     query = update.callback_query
+    user_id = query.from_user.id
     chat_id = query.message.chat.id
+
+    # Deny access if not in allow‐list
+    if user_id not in ALLOWED_USERS:
+        query.answer()
+        query.message.reply_text(DENIED_MESSAGE, parse_mode="MarkdownV2", disable_web_page_preview=True)
+        return
 
     try:
         query.answer()
@@ -211,7 +246,14 @@ def anime_callback(update: Update, context: CallbackContext):
 # ──────────────────────────────────────────────────────────────────────────────
 def episode_callback(update: Update, context: CallbackContext):
     query = update.callback_query
+    user_id = query.from_user.id
     chat_id = query.message.chat.id
+
+    # Deny access if not in allow‐list
+    if user_id not in ALLOWED_USERS:
+        query.answer()
+        query.message.reply_text(DENIED_MESSAGE, parse_mode="MarkdownV2", disable_web_page_preview=True)
+        return
 
     try:
         query.answer()
@@ -251,7 +293,7 @@ def episode_callback(update: Update, context: CallbackContext):
         queued_text = f"⏳ Episode {ep_num} queued for download… You’ll receive it shortly."
 
     try:
-        query.edit_message_text(queued_text, parse_mode="Markdown")
+        query.edit_message_text(queued_text, parse_mode="MarkdownV2")
     except Exception:
         pass
 
@@ -270,7 +312,14 @@ def episode_callback(update: Update, context: CallbackContext):
 # ──────────────────────────────────────────────────────────────────────────────
 def episodes_all_callback(update: Update, context: CallbackContext):
     query = update.callback_query
+    user_id = query.from_user.id
     chat_id = query.message.chat.id
+
+    # Deny access if not in allow‐list
+    if user_id not in ALLOWED_USERS:
+        query.answer()
+        query.message.reply_text(DENIED_MESSAGE, parse_mode="MarkdownV2", disable_web_page_preview=True)
+        return
 
     try:
         query.answer()
@@ -297,7 +346,7 @@ def episodes_all_callback(update: Update, context: CallbackContext):
         queued_all_text = "⏳ Queued all episodes for download… You’ll receive them one by one."
 
     try:
-        query.edit_message_text(queued_all_text, parse_mode="Markdown")
+        query.edit_message_text(queued_all_text, parse_mode="MarkdownV2")
     except Exception:
         pass
 
@@ -574,7 +623,6 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         bot.delete_message(chat_id=chat_id, message_id=status_sub.message_id)
     except Exception:
         pass
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 10) Background task for “Download All” episodes (download→upload→subtitle with deletions)
