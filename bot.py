@@ -12,7 +12,7 @@ import time
 
 
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
-from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, CallbackContext
+
 
 from telethon import TelegramClient
 
@@ -64,7 +64,7 @@ if not TELETHON_API_ID or not TELETHON_API_HASH:
 # 2) Initialize Bot API + Dispatcher
 # ——————————————————————————————————————————————————————————————
 bot = Bot(token=BOT_TOKEN)
-dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
+
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -876,12 +876,7 @@ def error_handler(update: object, context: CallbackContext):
 # ──────────────────────────────────────────────────────────────────────────────
 # 12) Register handlers with the dispatcher
 # ──────────────────────────────────────────────────────────────────────────────
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("search", search_command))
-dispatcher.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime_idx:"))
-dispatcher.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode_idx:"))
-dispatcher.add_handler(CallbackQueryHandler(episodes_all_callback, pattern=r"^episode_all$"))
-dispatcher.add_error_handler(error_handler)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 13) Flask app for webhook + health check
@@ -903,7 +898,12 @@ if __name__ == "__main__":
 
     updater = Updater(token=BOT_TOKEN, use_context=True)
     updater.dispatcher = dispatcher
-
+    dispatcher.add_handler(CommandHandler("start", start))
+dispatcher.add_handler(CommandHandler("search", search_command))
+dispatcher.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime_idx:"))
+dispatcher.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode_idx:"))
+dispatcher.add_handler(CallbackQueryHandler(episodes_all_callback, pattern=r"^episode_all$"))
+dispatcher.add_error_handler(error_handler)
     # Start polling for updates
     updater.start_polling()
     updater.idle()
