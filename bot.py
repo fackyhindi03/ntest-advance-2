@@ -10,7 +10,7 @@ import logging
 import asyncio
 import time
 
-from flask import Flask, request
+
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, CallbackContext
 
@@ -45,11 +45,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN environment variable is not set")
 
-KOYEB_APP_URL = os.getenv("KOYEB_APP_URL")
-if not KOYEB_APP_URL:
-    raise RuntimeError(
-        "KOYEB_APP_URL environment variable is not set. It must be your bot’s public HTTPS URL (no trailing slash)."
-    )
+
 
 ANIWATCH_API_BASE = os.getenv("ANIWATCH_API_BASE")
 if not ANIWATCH_API_BASE:
@@ -890,32 +886,24 @@ dispatcher.add_error_handler(error_handler)
 # ──────────────────────────────────────────────────────────────────────────────
 # 13) Flask app for webhook + health check
 # ──────────────────────────────────────────────────────────────────────────────
-app = Flask(__name__)
 
-@app.route("/webhook", methods=["POST"])
-def webhook_handler():
-    data = request.get_json(force=True)
-    update = Update.de_json(data, bot)
-    dispatcher.process_update(update)
-    return "OK", 200
-
-@app.route("/", methods=["GET"])
-def health_check():
-    return "OK", 200
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 14) On startup, set Telegram webhook to <KOYEB_APP_URL>/webhook
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    webhook_url = f"{KOYEB_APP_URL}/webhook"
-    try:
-        bot.set_webhook(webhook_url)
-        logger.info(f"Successfully set webhook to {webhook_url}")
-    except Exception as ex:
-        logger.error(f"Failed to set webhook: {ex}", exc_info=True)
-        raise
-
+    # Ensure our cache directories exist
     os.makedirs("subtitles_cache", exist_ok=True)
     os.makedirs("videos_cache", exist_ok=True)
-    logger.info("Starting Flask server on port 8080…")
-    app.run(host="0.0.0.0", port=8080)
+
+    logger.info("Starting bot with polling…")
+
+    # Create an Updater & Dispatcher (re‐use the existing dispatcher)
+    from telegram.ext import Updater
+
+    updater = Updater(token=BOT_TOKEN, use_context=True)
+    updater.dispatcher = dispatcher
+
+    # Start polling for updates
+    updater.start_polling()
+    updater.idle()
