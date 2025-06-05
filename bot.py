@@ -283,9 +283,9 @@ def episode_callback(update: Update, context: CallbackContext):
     if anime_name:
         # Use plain text here (no Markdown) so we never fail an edit
         queued_text = (
-            "🔰 Details Of Anime 🔰\n\n"
-            f"🎬 Name: {anime_name}\n"
-            f"🔢 Episode: {ep_num}"
+            "🔰 *Details Of Anime* 🔰\n\n"
+            f"🎬 *Name:* {anime_name}\n"
+            f"🔢 *Episode:* {ep_num}"
         )
     else:
         # Fallback plain‐text
@@ -337,9 +337,9 @@ def episodes_all_callback(update: Update, context: CallbackContext):
     anime_name = selected_anime_title.get(chat_id)
     if anime_name:
         queued_all_text = (
-            "🔰 Details Of Anime 🔰\n\n"
-            f"🎬 Name: {anime_name}\n"
-            "🔢 Episode: All"
+            "🔰 *Details Of Anime* 🔰\n\n"
+            f"🎬 *Name:* {anime_name}\n"
+            "🔢 *Episode:* All"
         )
     else:
         queued_all_text = "⏳ Queued all episodes for download… You’ll receive them one by one."
