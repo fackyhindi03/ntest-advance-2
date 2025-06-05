@@ -215,7 +215,7 @@ def anime_callback(update: Update, context: CallbackContext):
 
     # Let the user know we’re fetching episodes:
     try:
-        # We can bold the title here because we know 'title' itself may contain underscores, etc.
+        # Escape underscores, dots, parentheses, hyphens before bolding
         title_escaped = (
             title
             .replace("_", "\\_")
@@ -310,7 +310,7 @@ def episode_callback(update: Update, context: CallbackContext):
     # Fetch the stored anime name (if it exists)
     anime_name = selected_anime_title.get(chat_id)
     if anime_name:
-        # Escape any MarkdownV2‐reserved characters in the title
+        # Escape MarkdownV2‐reserved characters in the title
         safe_name = (
             anime_name
             .replace("_", "\\_")
@@ -324,11 +324,11 @@ def episode_callback(update: Update, context: CallbackContext):
             "🎬 *Name:* " + safe_name + "\n"
             "🔢 *Episode:* " + str(ep_num)
         )
-        # Send it as MarkdownV2 so that *Details Of Anime* and *Name:* and *Episode:* are bold
+        # Send as MarkdownV2 so the headings are bold
         try:
             query.edit_message_text(details_text, parse_mode="MarkdownV2")
         except Exception:
-            # In the unlikely event it still fails, fall back to plain text
+            # Fallback to plain text if something still breaks
             fallback = f"Details Of Anime:\nName: {anime_name}\nEpisode: {ep_num}"
             try:
                 query.edit_message_text(fallback)
@@ -448,13 +448,22 @@ async def telethon_send_with_progress(chat_id: int, file_path: str, caption: str
             total_mb = total_bytes_inner / (1024 * 1024)
             speed = uploaded_mb / elapsed if elapsed > 0 else 0
             percent = (uploaded_bytes / total_bytes_inner) * 100 if total_bytes_inner > 0 else 0
-            eta = (elapsed * (total_bytes_inner - uploaded_bytes) / uploaded_bytes) if uploaded_bytes > 0 else None
+            eta = (
+                (elapsed * (total_bytes_inner - uploaded_bytes) / uploaded_bytes)
+                if uploaded_bytes > 0
+                else None
+            )
 
             elapsed_str = f"{int(elapsed//60)}m {int(elapsed%60)}s"
-            eta_str = f"{int(eta//60)}m {int(eta%60)}s" if (eta is not None and eta >= 0) else "–"
+            eta_str = (
+                f"{int(eta//60)}m {int(eta%60)}s"
+                if (eta is not None and eta >= 0)
+                else "–"
+            )
 
+            # Use HTML <b>…</b> so that we don't have to escape all the dots/hyphens in numbers
             text = (
-                "📤 *Uploading File*\n\n"
+                "📤 <b>Uploading File</b>\n\n"
                 f"📊Size: {uploaded_mb:.2f} MB of {total_mb:.2f} MB\n"
                 f"⚡️Speed: {speed:.2f} MB/s\n"
                 f"⏱️Time Elapsed: {elapsed_str}\n"
@@ -463,7 +472,10 @@ async def telethon_send_with_progress(chat_id: int, file_path: str, caption: str
             )
             try:
                 bot.edit_message_text(
-                    text, chat_id=chat_id, message_id=status_message_id, parse_mode="MarkdownV2"
+                    text=text,
+                    chat_id=chat_id,
+                    message_id=status_message_id,
+                    parse_mode="HTML",  # ← HTML bold
                 )
             except Exception:
                 pass
@@ -509,8 +521,9 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         bot.send_message(chat_id, f"😔 Could not find a SUB-HD2 video stream for Episode {ep_num}.")
         return
 
+    #  (b) Step 2: DOWNLOAD MP4 via ffmpeg (with HTML‐powered progress callback)
     status_download = bot.send_message(chat_id, "📥 Downloading File\nProgress: 0%")
-    last_dl_update = [0.0]
+    last_dl_update = [0.0]  # mutable container to track last update timestamp
 
     def download_progress_cb(downloaded_mb, total_duration_s, percent, speed_mb_s, elapsed_s, eta_s):
         now = time.time()
@@ -519,10 +532,14 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         last_dl_update[0] = now
 
         elapsed_str = f"{int(elapsed_s//60)}m {int(elapsed_s%60)}s"
-        eta_str = f"{int(eta_s//60)}m {int(eta_s%60)}s" if (eta_s is not None and eta_s >= 0) else "–"
+        eta_str = (
+            f"{int(eta_s//60)}m {int(eta_s%60)}s"
+            if (eta_s is not None and eta_s >= 0)
+            else "–"
+        )
 
         text = (
-            "📥 *Downloading File*\n\n"
+            "📥 <b>Downloading File</b>\n\n"
             f"📊Size: {downloaded_mb:.2f} MB\n"
             f"⚡️Speed: {speed_mb_s:.2f} MB/s\n"
             f"⏱️Time Elapsed: {elapsed_str}\n"
@@ -530,7 +547,12 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
             f"📈Progress: {percent:.1f}%"
         )
         try:
-            bot.edit_message_text(text, chat_id=chat_id, message_id=status_download.message_id, parse_mode="MarkdownV2")
+            bot.edit_message_text(
+                text=text,
+                chat_id=chat_id,
+                message_id=status_download.message_id,
+                parse_mode="HTML",
+            )
         except Exception:
             pass
 
@@ -543,6 +565,7 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         )
     except Exception as e:
         logger.error(f"[Thread] Error downloading video (Episode {ep_num}): {e}", exc_info=True)
+        # If ffmpeg fails, delete the “Downloading File” status and send fallback
         try:
             bot.delete_message(chat_id=chat_id, message_id=status_download.message_id)
         except Exception:
@@ -571,11 +594,13 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
                 bot.send_message(chat_id, f"⚠️ Could not download/send subtitle for Episode {ep_num}.")
         return
 
+    # Delete the “Downloading File” status message (100% download done)
     try:
         bot.delete_message(chat_id=chat_id, message_id=status_download.message_id)
     except Exception:
         pass
 
+    # (c) Step 3: UPLOAD MP4 via Telethon (with HTML‐powered progress callback)
     status_upload = bot.send_message(chat_id, "📤 Uploading File\nProgress: 0%")
     try:
         send_file_via_telethon_with_progress(
@@ -586,6 +611,7 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         )
     except Exception as e:
         logger.error(f"[Thread] Telethon upload failed for Episode {ep_num}: {e}", exc_info=True)
+        # Delete “Uploading File” status, then fallback to HLS link + subtitle
         try:
             bot.delete_message(chat_id=chat_id, message_id=status_upload.message_id)
         except Exception:
@@ -616,16 +642,19 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
                 bot.send_message(chat_id, f"⚠️ Could not download/send subtitle for Episode {ep_num}.")
         return
     finally:
+        # Always try to clean up the raw MP4 from disk once Telethon is done (or on error)
         try:
             os.remove(raw_mp4)
         except OSError:
             pass
 
+    # Delete the “Uploading File” status message (100% upload done)
     try:
         bot.delete_message(chat_id=chat_id, message_id=status_upload.message_id)
     except Exception:
         pass
 
+    # (d) Step 4: Send subtitle via Bot API (small file)
     if not subtitle_url:
         bot.send_message(chat_id, "❗ No English subtitle (.vtt) found.")
         return
@@ -653,6 +682,7 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         except OSError:
             pass
 
+    # Delete the subtitle‐status message after sending
     try:
         bot.delete_message(chat_id=chat_id, message_id=status_sub.message_id)
     except Exception:
@@ -676,6 +706,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
             bot.send_message(chat_id, f"😔 Episode {ep_num}: No SUB-HD2 stream found. Skipping.")
             continue
 
+        # (b) Download raw MP4
         status_download = bot.send_message(chat_id, f"📥 Downloading Episode {ep_num}...\nProgress: 0%")
         last_dl_update = [0.0]
 
@@ -686,9 +717,13 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
             last_dl_update[0] = now
 
             elapsed_str = f"{int(elapsed_s//60)}m {int(elapsed_s%60)}s"
-            eta_str = f"{int(eta_s//60)}m {int(eta_s%60)}s" if (eta_s is not None and eta_s >= 0) else "–"
+            eta_str = (
+                f"{int(eta_s//60)}m {int(eta_s%60)}s"
+                if (eta_s is not None and eta_s >= 0)
+                else "–"
+            )
             text = (
-                f"📥 Downloading Episode {ep_num}\n"
+                f"📥 <b>Downloading Episode {ep_num}</b>\n"
                 f"📊Size: {downloaded_mb:.2f} MB\n"
                 f"⚡️Speed: {speed_mb_s:.2f} MB/s\n"
                 f"⏱️Time Elapsed: {elapsed_str}\n"
@@ -696,7 +731,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
                 f"📈Progress: {percent:.1f}%"
             )
             try:
-                bot.edit_message_text(text, chat_id=chat_id, message_id=status_download.message_id)
+                bot.edit_message_text(text, chat_id=chat_id, message_id=status_download.message_id, parse_mode="HTML")
             except Exception:
                 pass
 
@@ -714,6 +749,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
             except Exception:
                 pass
 
+            # Fallback: send HLS link + subtitle
             bot.send_message(
                 chat_id,
                 f"⚠️ Could not convert Episode {ep_num} to MP4. Here’s the HLS link:\n\n{hls_link}"
@@ -737,11 +773,13 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
                     bot.send_message(chat_id, f"⚠️ Could not send subtitle for Episode {ep_num}.")
             continue
 
+        # Delete the “Downloading Episode…” status message (100% download done)
         try:
             bot.delete_message(chat_id=chat_id, message_id=status_download.message_id)
         except Exception:
             pass
 
+        # (c) Upload via Telethon
         status_upload = bot.send_message(chat_id, f"📤 Uploading Episode {ep_num}...\nProgress: 0%")
         try:
             send_file_via_telethon_with_progress(
@@ -757,6 +795,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
             except Exception:
                 pass
 
+            # Fallback: send HLS link + subtitle
             bot.send_message(chat_id, f"⚠️ Could not send Episode {ep_num} via Telethon. Here’s the HLS link:\n\n{hls_link}")
             try:
                 os.remove(raw_mp4)
@@ -781,16 +820,19 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
                     bot.send_message(chat_id, f"⚠️ Could not send subtitle for Episode {ep_num}.")
             continue
         finally:
+            # Clean up raw MP4
             try:
                 os.remove(raw_mp4)
             except OSError:
                 pass
 
+        # Delete the “Uploading Episode…” status message
         try:
             bot.delete_message(chat_id=chat_id, message_id=status_upload.message_id)
         except Exception:
             pass
 
+        # (d) Send subtitle
         if not subtitle_url:
             bot.send_message(chat_id, f"❗ No English subtitle found for Episode {ep_num}.")
             continue
@@ -818,6 +860,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
             except OSError:
                 pass
 
+        # Delete the subtitle‐status message
         try:
             bot.delete_message(chat_id=chat_id, message_id=status_sub.message_id)
         except Exception:
