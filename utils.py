@@ -11,7 +11,7 @@ def download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cach
     os.makedirs(cache_dir, exist_ok=True)
     local_filename = os.path.join(cache_dir, f"Episode {ep_num}.vtt")
 
-    # Stream‐download via requests
+    # Stream-download via requests
     response = requests.get(subtitle_url, stream=True, timeout=30)
     response.raise_for_status()
 
@@ -42,7 +42,13 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
             "-of", "default=noprint_wrappers=1:nokey=1",
             hls_link
         ]
-        result = subprocess.run(cmd_probe, capture_output=True, text=True, timeout=15)
+        result = subprocess.run(
+            cmd_probe,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            timeout=15
+        )
         duration = float(result.stdout.strip())
     except Exception as e:
         raise RuntimeError(f"Failed to get duration via ffprobe: {e}")
@@ -57,7 +63,13 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
         "-nostats",
         output_path
     ]
-    proc = subprocess.Popen(cmd_ffmpeg, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+    proc = subprocess.Popen(
+        cmd_ffmpeg,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        universal_newlines=True,
+        bufsize=1
+    )
 
     start_time = time.time()
     downloaded_mb = 0.0
