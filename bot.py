@@ -498,7 +498,7 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
                 bot.send_document(
                     chat_id=chat_id,
                     document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
-                    caption=f"Here is the subtitle for Episode {ep_num}.",
+                    caption=f"Here is the subtitle for Episode {ep_num}",
                 )
                 os.remove(local_vtt)
                 try:
