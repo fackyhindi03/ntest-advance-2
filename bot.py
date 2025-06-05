@@ -604,7 +604,7 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
                 bot.send_document(
                     chat_id=chat_id,
                     document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
-                    caption=f"Here is the subtitle for Episode {ep_num}."
+                    caption=f"Here is the subtitle for Episode {ep_num}"
                 )
                 os.remove(local_vtt)
                 try:
@@ -642,7 +642,7 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         bot.send_document(
             chat_id=chat_id,
             document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
-            caption=f"Here is the subtitle for Episode {ep_num}."
+            caption=f"Here is the subtitle for Episode {ep_num}"
         )
     except Exception as e:
         logger.error(f"[Thread] Error sending subtitle (Episode {ep_num}): {e}", exc_info=True)
@@ -725,7 +725,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
                     bot.send_document(
                         chat_id=chat_id,
                         document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
-                        caption=f"Here is the subtitle for Episode {ep_num}."
+                        caption=f"Here is the subtitle for Episode {ep_num}"
                     )
                     os.remove(local_vtt)
                     try:
@@ -769,7 +769,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
                     bot.send_document(
                         chat_id=chat_id,
                         document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
-                        caption=f"Here is the subtitle for Episode {ep_num}."
+                        caption=f"Here is the subtitle for Episode {ep_num}"
                     )
                     os.remove(local_vtt)
                     try:
@@ -807,7 +807,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
             bot.send_document(
                 chat_id=chat_id,
                 document=InputFile(open(local_vtt, "rb"), filename=f"Episode {ep_num}.vtt"),
-                caption=f"Here is the subtitle for Episode {ep_num}."
+                caption=f"Here is the subtitle for Episode {ep_num}"
             )
         except Exception as e:
             logger.error(f"[Thread] Error sending subtitle (Episode {ep_num}): {e}", exc_info=True)
