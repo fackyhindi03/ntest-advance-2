@@ -30,7 +30,7 @@ ALLOWED_USERS = {
 
 DENIED_MESSAGE = (
     "🚫 *Access Denied\\!*  \n"
-    "You are not authorized to use this bot.  \n\n"
+    "You are not authorized to use this bot\\.  \n\n"
     "📩 Contact @THe\\_vK\\_3 for access\\!"
 )
 
