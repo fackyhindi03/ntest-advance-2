@@ -454,7 +454,7 @@ async def telethon_send_with_progress(chat_id: int, file_path: str, caption: str
             eta_str = f"{int(eta//60)}m {int(eta%60)}s" if (eta is not None and eta >= 0) else "–"
 
             text = (
-                "📤 Uploading File\n\n"
+                "📤 *Uploading File*\n\n"
                 f"📊Size: {uploaded_mb:.2f} MB of {total_mb:.2f} MB\n"
                 f"⚡️Speed: {speed:.2f} MB/s\n"
                 f"⏱️Time Elapsed: {elapsed_str}\n"
@@ -463,7 +463,7 @@ async def telethon_send_with_progress(chat_id: int, file_path: str, caption: str
             )
             try:
                 bot.edit_message_text(
-                    text, chat_id=chat_id, message_id=status_message_id
+                    text, chat_id=chat_id, message_id=status_message_id, parse_mode="MarkdownV2",
                 )
             except Exception:
                 pass
@@ -522,7 +522,7 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         eta_str = f"{int(eta_s//60)}m {int(eta_s%60)}s" if (eta_s is not None and eta_s >= 0) else "–"
 
         text = (
-            "📥 Downloading File\n\n"
+            "📥 *Downloading File*\n\n"
             f"📊Size: {downloaded_mb:.2f} MB\n"
             f"⚡️Speed: {speed_mb_s:.2f} MB/s\n"
             f"⏱️Time Elapsed: {elapsed_str}\n"
@@ -530,7 +530,7 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
             f"📈Progress: {percent:.1f}%"
         )
         try:
-            bot.edit_message_text(text, chat_id=chat_id, message_id=status_download.message_id)
+            bot.edit_message_text(text, chat_id=chat_id, message_id=status_download.message_id, parse_mode="MarkdownV2")
         except Exception:
             pass
 
