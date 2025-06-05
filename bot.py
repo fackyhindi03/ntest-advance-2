@@ -26,7 +26,7 @@ from utils import (
 # ——————————————————————————————————————————————————————————————
 # Replace 123456789 with your actual Telegram user ID (and add more IDs if needed)
 ALLOWED_USERS = {
-    123456789,
+    1423807625,
 }
 
 DENIED_MESSAGE = (
