@@ -26,6 +26,9 @@ from utils import (
 # Replace these numeric IDs with the actual Telegram user IDs you wish to allow.
 ALLOWED_USERS = {
     1423807625,
+    5476335536,
+    2096201372,
+    633599652,
     # You can add more IDs like:
     # 123456789,
     # 987654321,
