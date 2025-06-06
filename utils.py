@@ -33,6 +33,9 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
     If ffprobe can return a valid duration, progress_callback(downloaded_mb, total_duration_s,
     percent, speed_mb_s, elapsed_s, eta_s) will be invoked periodically; otherwise it proceeds without %.
     Returns the local MP4 file path.
+
+    This version adds `-protocol_whitelist "file,http,https,tcp,tls"` to the ffmpeg command
+    to avoid crashes on certain HLS streams (exit code -11).
     """
     os.makedirs(cache_dir, exist_ok=True)
     output_path = os.path.join(cache_dir, f"Episode {ep_num}.mp4")
@@ -54,26 +57,26 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
         else:
             raise RuntimeError("ffprobe returned empty stdout")
     except Exception as e:
-        # If ffprobe fails (segfault, network issue, invalid stream), log a warning and proceed
         logger.warning(f"ffprobe failed for {hls_link}: {e}. Continuing without duration.")
         duration = None
 
-    # ─── 2) Run ffmpeg to download/convert the HLS stream into MP4 ─────────────────────────────
-    # Use "-progress pipe:1" so that ffmpeg prints progress info to stdout in key=value lines
+    # ─── 2) Run ffmpeg, whitelisting HLS protocols ───────────────────────────────────────────
+    # Using "-progress pipe:1" to get progress info on stdout.
     cmd_ffmpeg = [
         "ffmpeg",
+        "-protocol_whitelist", "file,http,https,tcp,tls",
         "-i", hls_link,
         "-c", "copy",
-        "-bsf:a", "aac_adtstoasc",   # necessary for some HLS/AAC streams
+        "-bsf:a", "aac_adtstoasc",   # fix AAC frames if needed
         "-progress", "pipe:1",
-        "-nostats",  # disable the normal progress line, since we're parsing pipe:1
+        "-nostats",
         output_path
     ]
 
     proc = subprocess.Popen(
         cmd_ffmpeg,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,  # we ignore stderr since progress is on stdout
+        stderr=subprocess.DEVNULL,  # ignore stderr, progress is on stdout
         text=True,
         bufsize=1,
         universal_newlines=True
@@ -82,11 +85,7 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
     start_time = time.time()
     downloaded_mb = 0.0
 
-    # ffmpeg’s “-progress pipe:1” will emit lines like:
-    #   frame=...
-    #   out_time_ms=...
-    #   progress=...
-    # We parse `out_time_ms` to compute elapsed seconds, then percent if duration is known.
+    # Parse ffmpeg progress output (key=value lines)
     while True:
         line = proc.stdout.readline()
         if not line:
@@ -102,7 +101,7 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
         key, val = line.split("=", 1)
 
         if key == "out_time_ms":
-            # Value is microseconds processed so far
+            # out_time_ms = microseconds of video processed
             try:
                 out_time_ms = int(val)
             except ValueError:
@@ -126,11 +125,11 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
                 eta = elapsed * (100 - percent) / percent
 
             if progress_callback:
-                # Invoke callback(downloaded_mb, total_duration_s, percent, speed_mb_s, elapsed_s, eta_s)
+                # Report: downloaded_mb, total_duration_s, percent, speed_mb_s, elapsed_s, eta_s
                 progress_callback(downloaded_mb, duration, percent or 0.0, speed, elapsed, eta or 0.0)
 
         elif key == "progress" and val == "end":
-            # Final progress: 100%
+            # Final progress (100%)
             try:
                 size_bytes = os.path.getsize(output_path)
                 downloaded_mb = size_bytes / (1024 * 1024)
@@ -148,6 +147,7 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
 
     retcode = proc.wait()
     if retcode != 0:
+        # -11 means segmentation fault; any non-zero return is treated as failure
         raise RuntimeError(f"ffmpeg failed with exit code {retcode}")
 
     return output_path
