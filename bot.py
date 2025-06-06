@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-# bot.py
-
-from dotenv import load_dotenv
-load_dotenv()
+# bot_polling.py
 
 import os
 import threading
@@ -10,9 +7,11 @@ import logging
 import asyncio
 import time
 
-from flask import Flask, request
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
-from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, CallbackContext
+from dotenv import load_dotenv
+load_dotenv()
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
 
 from telethon import TelegramClient
 
@@ -45,12 +44,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN environment variable is not set")
 
-KOYEB_APP_URL = os.getenv("KOYEB_APP_URL")
-if not KOYEB_APP_URL:
-    raise RuntimeError(
-        "KOYEB_APP_URL environment variable is not set. It must be your bot’s public HTTPS URL (no trailing slash)."
-    )
-
 ANIWATCH_API_BASE = os.getenv("ANIWATCH_API_BASE")
 if not ANIWATCH_API_BASE:
     raise RuntimeError(
@@ -65,19 +58,17 @@ if not TELETHON_API_ID or not TELETHON_API_HASH:
     )
 
 # ——————————————————————————————————————————————————————————————
-# 2) Initialize Bot API + Dispatcher
+# 2) Set up logging
 # ——————————————————————————————————————————————————————————————
-bot = Bot(token=BOT_TOKEN)
-dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
-
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # ——————————————————————————————————————————————————————————————
-# 3) In‐memory caches
+# 3) In‐memory caches (per-chat)
 # ——————————————————————————————————————————————————————————————
+# We store search results and episode lists so callbacks can reference them.
 search_cache = {}           # chat_id → [ (title, slug), … ]
 episode_cache = {}          # chat_id → [ (ep_num, episode_id), … ]
 selected_anime_title = {}   # chat_id → title (so we can refer back to it)
@@ -136,7 +127,7 @@ def search_command(update: Update, context: CallbackContext):
         return
 
     if len(context.args) == 0:
-        update.message.reply_text("Please provide an anime name.\nExample: /search Naruto")
+        update.message.reply_text("⚠️ Please provide an anime name.\nExample: /search Naruto")
         return
 
     query_text = " ".join(context.args).strip()
@@ -215,7 +206,6 @@ def anime_callback(update: Update, context: CallbackContext):
 
     # Let the user know we’re fetching episodes:
     try:
-        # Escape underscores, dots, parentheses, hyphens before bolding
         title_escaped = (
             title
             .replace("_", "\\_")
@@ -310,7 +300,6 @@ def episode_callback(update: Update, context: CallbackContext):
     # Fetch the stored anime name (if it exists)
     anime_name = selected_anime_title.get(chat_id)
     if anime_name:
-        # Escape MarkdownV2‐reserved characters in the title
         safe_name = (
             anime_name
             .replace("_", "\\_")
@@ -324,11 +313,9 @@ def episode_callback(update: Update, context: CallbackContext):
             "🎬 *Name:* " + safe_name + "\n"
             "🔢 *Episode:* " + str(ep_num)
         )
-        # Send as MarkdownV2 so the headings are bold
         try:
             query.edit_message_text(details_text, parse_mode="MarkdownV2")
         except Exception:
-            # Fallback to plain text if something still breaks
             fallback = f"Details Of Anime:\nName: {anime_name}\nEpisode: {ep_num}"
             try:
                 query.edit_message_text(fallback)
@@ -348,7 +335,6 @@ def episode_callback(update: Update, context: CallbackContext):
         daemon=True
     )
     thread.start()
-    return
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 7b) Callback when user taps “Download All”
@@ -417,7 +403,6 @@ def episodes_all_callback(update: Update, context: CallbackContext):
         daemon=True
     )
     thread.start()
-    return
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 8) Helper: Telethon upload with real‐time progress → send as “document”
@@ -461,7 +446,6 @@ async def telethon_send_with_progress(chat_id: int, file_path: str, caption: str
                 else "–"
             )
 
-            # Use HTML <b>…</b> so that we don't have to escape all the dots/hyphens in numbers
             text = (
                 "📤 <b>Uploading File</b>\n\n"
                 f"📊Size: {uploaded_mb:.2f} MB of {total_mb:.2f} MB\n"
@@ -475,7 +459,7 @@ async def telethon_send_with_progress(chat_id: int, file_path: str, caption: str
                     text=text,
                     chat_id=chat_id,
                     message_id=status_message_id,
-                    parse_mode="HTML",  # ← HTML bold
+                    parse_mode="HTML",
                 )
             except Exception:
                 pass
@@ -506,7 +490,7 @@ def send_file_via_telethon_with_progress(chat_id: int, file_path: str, caption: 
         logger.error(f"[Telethon sync] Exception while sending {file_path} to chat {chat_id}: {e}", exc_info=True)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 9) Background task for sending a single episode (download → upload → subtitle, with deletions)
+# 9) Background task for sending a single episode (download → upload → subtitle)
 # ──────────────────────────────────────────────────────────────────────────────
 def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
     from hianimez_scraper import extract_episode_stream_and_subtitle
@@ -565,7 +549,6 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         )
     except Exception as e:
         logger.error(f"[Thread] Error downloading video (Episode {ep_num}): {e}", exc_info=True)
-        # If ffmpeg fails, delete the “Downloading File” status and send fallback
         try:
             bot.delete_message(chat_id=chat_id, message_id=status_download.message_id)
         except Exception:
@@ -611,7 +594,6 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         )
     except Exception as e:
         logger.error(f"[Thread] Telethon upload failed for Episode {ep_num}: {e}", exc_info=True)
-        # Delete “Uploading File” status, then fallback to HLS link + subtitle
         try:
             bot.delete_message(chat_id=chat_id, message_id=status_upload.message_id)
         except Exception:
@@ -878,44 +860,25 @@ def error_handler(update: object, context: CallbackContext):
             pass
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 12) Register handlers with the dispatcher
-# ──────────────────────────────────────────────────────────────────────────────
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("search", search_command))
-dispatcher.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime_idx:"))
-dispatcher.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode_idx:"))
-dispatcher.add_handler(CallbackQueryHandler(episodes_all_callback, pattern=r"^episode_all$"))
-dispatcher.add_error_handler(error_handler)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 13) Flask app for webhook + health check
-# ──────────────────────────────────────────────────────────────────────────────
-app = Flask(__name__)
-
-@app.route("/webhook", methods=["POST"])
-def webhook_handler():
-    data = request.get_json(force=True)
-    update = Update.de_json(data, bot)
-    dispatcher.process_update(update)
-    return "OK", 200
-
-@app.route("/", methods=["GET"])
-def health_check():
-    return "OK", 200
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 14) On startup, set Telegram webhook to <KOYEB_APP_URL>/webhook
+# 12) Main: set up Updater + start polling
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    webhook_url = f"{KOYEB_APP_URL}/webhook"
-    try:
-        bot.set_webhook(webhook_url)
-        logger.info(f"Successfully set webhook to {webhook_url}")
-    except Exception as ex:
-        logger.error(f"Failed to set webhook: {ex}", exc_info=True)
-        raise
+    updater = Updater(token=BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
 
+    # Register handlers
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("search", search_command))
+    dp.add_handler(CallbackQueryHandler(anime_callback, pattern=r"^anime_idx:"))
+    dp.add_handler(CallbackQueryHandler(episode_callback, pattern=r"^episode_idx:"))
+    dp.add_handler(CallbackQueryHandler(episodes_all_callback, pattern=r"^episode_all$"))
+    dp.add_error_handler(error_handler)
+
+    # Create cache directories if they don’t exist
     os.makedirs("subtitles_cache", exist_ok=True)
     os.makedirs("videos_cache", exist_ok=True)
-    logger.info("Starting Flask server on port 8080…")
-    app.run(host="0.0.0.0", port=8080)
+
+    # Start polling Telegram for updates
+    updater.start_polling()
+    logger.info("Bot started with long polling. Listening for updates…")
+    updater.idle()
