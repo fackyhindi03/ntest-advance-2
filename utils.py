@@ -2,6 +2,10 @@ import os
 import subprocess
 import time
 import requests
+import logging
+import re
+
+logger = logging.getLogger(__name__)
 
 def download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cache"):
     """
@@ -25,15 +29,16 @@ def download_and_rename_subtitle(subtitle_url, ep_num, cache_dir="subtitles_cach
 
 def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progress_callback=None):
     """
-    Uses ffprobe → ffmpeg to download an HLS stream into an MP4.
-    Reports progress via progress_callback(downloaded_mb, total_duration_s, percent, speed_mb_s, elapsed_s, eta_s).
-
-    Returns the local file path "Episode {ep_num}.mp4".
+    Converts an HLS stream (hls_link) into a local MP4 file named "Episode {ep_num}.mp4" in cache_dir.
+    If ffprobe can return a valid duration, progress_callback(downloaded_mb, total_duration_s,
+    percent, speed_mb_s, elapsed_s, eta_s) will be invoked periodically; otherwise it proceeds without %.
+    Returns the local MP4 file path.
     """
     os.makedirs(cache_dir, exist_ok=True)
     output_path = os.path.join(cache_dir, f"Episode {ep_num}.mp4")
 
-    # 1) Use ffprobe to get total duration (in seconds)
+    # ─── 1) Try to get total duration (in seconds) via ffprobe ───────────────────────────────
+    duration = None
     try:
         cmd_probe = [
             "ffprobe",
@@ -43,47 +48,68 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
             hls_link
         ]
         result = subprocess.run(cmd_probe, capture_output=True, text=True, timeout=15)
-        duration = float(result.stdout.strip())
+        result_stdout = result.stdout.strip()
+        if result_stdout:
+            duration = float(result_stdout)
+        else:
+            raise RuntimeError("ffprobe returned empty stdout")
     except Exception as e:
-        raise RuntimeError(f"Failed to get duration via ffprobe: {e}")
+        # If ffprobe fails (segfault, network issue, invalid stream), log a warning and proceed
+        logger.warning(f"ffprobe failed for {hls_link}: {e}. Continuing without duration.")
+        duration = None
 
-    # 2) Run ffmpeg with "-progress pipe:1" to get periodic progress on stdout
+    # ─── 2) Run ffmpeg to download/convert the HLS stream into MP4 ─────────────────────────────
+    # Use "-progress pipe:1" so that ffmpeg prints progress info to stdout in key=value lines
     cmd_ffmpeg = [
         "ffmpeg",
         "-i", hls_link,
         "-c", "copy",
-        "-bsf:a", "aac_adtstoasc",   # fix AAC frames if needed
+        "-bsf:a", "aac_adtstoasc",   # necessary for some HLS/AAC streams
         "-progress", "pipe:1",
-        "-nostats",
+        "-nostats",  # disable the normal progress line, since we're parsing pipe:1
         output_path
     ]
-    proc = subprocess.Popen(cmd_ffmpeg, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+
+    proc = subprocess.Popen(
+        cmd_ffmpeg,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,  # we ignore stderr since progress is on stdout
+        text=True,
+        bufsize=1,
+        universal_newlines=True
+    )
 
     start_time = time.time()
     downloaded_mb = 0.0
 
+    # ffmpeg’s “-progress pipe:1” will emit lines like:
+    #   frame=...
+    #   out_time_ms=...
+    #   progress=...
+    # We parse `out_time_ms` to compute elapsed seconds, then percent if duration is known.
     while True:
         line = proc.stdout.readline()
         if not line:
-            # If process ended, break
             if proc.poll() is not None:
                 break
-            continue
+            else:
+                continue
 
         line = line.strip()
         if "=" not in line:
             continue
+
         key, val = line.split("=", 1)
 
         if key == "out_time_ms":
-            # out_time_ms is the number of microseconds of video already processed
+            # Value is microseconds processed so far
             try:
                 out_time_ms = int(val)
             except ValueError:
                 continue
 
-            current_time_s = out_time_ms / 1e6
-            percent = (current_time_s / duration) * 100 if duration > 0 else 0
+            current_time_s = out_time_ms / 1_000_000.0
+            percent = (current_time_s / duration) * 100 if (duration and duration > 0) else None
 
             # Check file size so far
             try:
@@ -95,20 +121,22 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
             elapsed = time.time() - start_time
             speed = downloaded_mb / elapsed if elapsed > 0 else 0
 
-            # ETA = elapsed × (100 – percent) / percent
-            eta = (elapsed * (100 - percent) / percent) if percent > 0 else None
+            eta = None
+            if percent is not None and percent > 0:
+                eta = elapsed * (100 - percent) / percent
 
             if progress_callback:
-                # Report: downloaded_mb, total_duration_s, percent, speed_mb_s, elapsed_s, eta_s
-                progress_callback(downloaded_mb, duration, percent, speed, elapsed, eta)
+                # Invoke callback(downloaded_mb, total_duration_s, percent, speed_mb_s, elapsed_s, eta_s)
+                progress_callback(downloaded_mb, duration, percent or 0.0, speed, elapsed, eta or 0.0)
 
         elif key == "progress" and val == "end":
-            # Reached the end of encoding → report 100% one final time
+            # Final progress: 100%
             try:
                 size_bytes = os.path.getsize(output_path)
                 downloaded_mb = size_bytes / (1024 * 1024)
             except OSError:
                 downloaded_mb = downloaded_mb
+
             elapsed = time.time() - start_time
             speed = downloaded_mb / elapsed if elapsed > 0 else 0
             percent = 100.0
@@ -120,6 +148,6 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
 
     retcode = proc.wait()
     if retcode != 0:
-        raise RuntimeError(f"ffmpeg failed with code {retcode}")
+        raise RuntimeError(f"ffmpeg failed with exit code {retcode}")
 
     return output_path
