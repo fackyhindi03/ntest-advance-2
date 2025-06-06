@@ -866,6 +866,10 @@ if __name__ == "__main__":
     updater = Updater(token=BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
 
+    # Define a global `bot` so that helper threads can do bot.send_message(...)
+    global bot
+    bot = updater.bot
+
     # Register handlers
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("search", search_command))
