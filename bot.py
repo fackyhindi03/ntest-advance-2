@@ -12,6 +12,7 @@ load_dotenv()
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
+from telegram.error import RetryAfter
 
 from telethon import TelegramClient
 
@@ -150,7 +151,7 @@ def search_command(update: Update, context: CallbackContext):
         return
 
     # Store (title, slug) in search_cache
-    search_cache[chat_id] = [(title, slug) for title, anime_url, slug in results]
+    search_cache[chat_id] = [(title, slug) for title, _, slug in results]
 
     buttons = []
     for idx, (title, slug) in enumerate(search_cache[chat_id]):
@@ -317,11 +318,7 @@ def episode_callback(update: Update, context: CallbackContext):
         try:
             query.edit_message_text(details_text, parse_mode="MarkdownV2")
         except Exception:
-            fallback = f"Details Of Anime:\nName: {anime_name}\nEpisode: {ep_num}"
-            try:
-                query.edit_message_text(fallback)
-            except Exception:
-                pass
+            pass
     else:
         queued_text = f"⏳ Episode {ep_num} queued for download… You’ll receive it shortly."
         try:
@@ -388,11 +385,7 @@ def episodes_all_callback(update: Update, context: CallbackContext):
         try:
             query.edit_message_text(all_text, parse_mode="MarkdownV2")
         except Exception:
-            fallback = f"Details Of Anime:\nName: {anime_name}\nEpisode: All"
-            try:
-                query.edit_message_text(fallback)
-            except Exception:
-                pass
+            pass
     else:
         queued_all_text = "⏳ Queued all episodes for download… You’ll receive them one by one."
         try:
@@ -426,11 +419,6 @@ def cancel_command(update: Update, context: CallbackContext):
 # 10) Helper: Telethon upload with real‐time progress → send as “document”
 # ──────────────────────────────────────────────────────────────────────────────
 async def telethon_send_with_progress(chat_id: int, file_path: str, caption: str, status_message_id: int):
-    """
-    Uses Telethon to send a single file (up to 2 GB) into `chat_id` as a document.
-    Updates an existing Telegram message (status_message_id) with upload progress.
-    This uses a per-chat session file: telethon_bot_session_{chat_id}.
-    """
     session_name = f"telethon_bot_session_{chat_id}"
     client = TelegramClient(session_name, int(TELETHON_API_ID), TELETHON_API_HASH)
     try:
@@ -489,8 +477,8 @@ async def telethon_send_with_progress(chat_id: int, file_path: str, caption: str
             caption=caption,
             force_document=True,
             progress_callback=progress_callback,
-            part_size_kb=2048,    # 2 MB chunks instead of 512 KB or 1 MB
-            max_connections=16    # up to 16 parallel uploads
+            part_size_kb=2048,
+            max_connections=16,
         )
     except Exception as e:
         logger.error(f"[Telethon] Failed to send {file_path} to chat {chat_id}: {e}", exc_info=True)
@@ -514,16 +502,7 @@ def send_file_via_telethon_with_progress(chat_id: int, file_path: str, caption: 
 # 11) Background task for sending a single episode (download → upload → subtitle)
 # ──────────────────────────────────────────────────────────────────────────────
 def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
-    """
-    1) Extract HLS link + subtitle URL
-    2) Download HLS → MP4 into videos_cache/{chat_id}/Episode {ep_num}.mp4
-    3) Upload via Telethon session telethon_bot_session_{chat_id}
-    4) Download + send subtitle into subtitles_cache/{chat_id}/Episode {ep_num}.vtt
-    Aborts immediately if cancel_events[chat_id].is_set().
-    """
     cancel_event = cancel_events.get(chat_id)
-
-    # If already cancelled, abort
     if cancel_event and cancel_event.is_set():
         return
 
@@ -539,20 +518,17 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         bot.send_message(chat_id, f"😔 Could not find a SUB-HD2 video stream for Episode {ep_num}.")
         return
 
-    # ─── Ensure per-chat cache directories ───────────────────────────────────────────────
     video_cache_dir = os.path.join("videos_cache", str(chat_id))
     subtitle_cache_dir = os.path.join("subtitles_cache", str(chat_id))
     os.makedirs(video_cache_dir, exist_ok=True)
     os.makedirs(subtitle_cache_dir, exist_ok=True)
 
-    # (b) Step 2: DOWNLOAD MP4 via ffmpeg
     status_download = bot.send_message(chat_id, "📥 Downloading File\nProgress: 0%")
     last_dl_update = [0.0]
 
     def download_progress_cb(downloaded_mb, total_duration_s, percent, speed_mb_s, elapsed_s, eta_s):
         if cancel_event and cancel_event.is_set():
             return
-
         now = time.time()
         if now - last_dl_update[0] < 3.0:
             return
@@ -601,16 +577,13 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
             bot.send_message(chat_id, f"❌ Download of Episode {ep_num} cancelled.")
             return
 
-        # Fallback: send HLS link + subtitle
         bot.send_message(
             chat_id,
             f"⚠️ Failed to convert Episode {ep_num} to MP4. Here’s the HLS link instead:\n\n{hls_link}"
         )
         if subtitle_url:
             try:
-                local_vtt = download_and_rename_subtitle(
-                    subtitle_url, ep_num, cache_dir=subtitle_cache_dir
-                )
+                local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir=subtitle_cache_dir)
                 status_sub = bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt”.")
                 bot.send_document(
                     chat_id=chat_id,
@@ -627,13 +600,11 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
                 bot.send_message(chat_id, f"⚠️ Could not download/send subtitle for Episode {ep_num}.")
         return
 
-    # Delete “Downloading File” status (download finished)
     try:
         bot.delete_message(chat_id=chat_id, message_id=status_download.message_id)
     except Exception:
         pass
 
-    # If user cancelled after download, abort before upload
     if cancel_event and cancel_event.is_set():
         bot.send_message(chat_id, f"❌ Download of Episode {ep_num} was cancelled before upload.")
         try:
@@ -642,7 +613,6 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
             pass
         return
 
-    # (c) Step 3: UPLOAD MP4 via Telethon
     status_upload = bot.send_message(chat_id, "📤 Uploading File\nProgress: 0%")
     try:
         send_file_via_telethon_with_progress(
@@ -674,9 +644,7 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
 
         if subtitle_url:
             try:
-                local_vtt = download_and_rename_subtitle(
-                    subtitle_url, ep_num, cache_dir=subtitle_cache_dir
-                )
+                local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir=subtitle_cache_dir)
                 status_sub = bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt.”")
                 bot.send_document(
                     chat_id=chat_id,
@@ -693,24 +661,21 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
                 bot.send_message(chat_id, f"⚠️ Could not download/send subtitle for Episode {ep_num}.")
         return
     finally:
-        # Clean up raw MP4 in any case
         try:
             os.remove(raw_mp4)
         except OSError:
             pass
 
-    # Delete “Uploading File” status (upload finished)
     try:
         bot.delete_message(chat_id=chat_id, message_id=status_upload.message_id)
     except Exception:
         pass
 
-    # (d) Step 4: Send subtitle via Bot API
     if not subtitle_url:
         bot.send_message(chat_id, "❗ No English subtitle (.vtt) found.")
         return
 
-    if cancel_event and cancel_event.is_set():
+    if cancel_events.get(chat_id, threading.Event()).is_set():
         bot.send_message(chat_id, f"❌ Subtitle download for Episode {ep_num} cancelled.")
         return
 
@@ -743,25 +708,19 @@ def download_and_send_episode(chat_id: int, ep_num: str, episode_id: str):
         pass
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 12) Background task for “Download All” episodes (download→upload→subtitle)
+# 12) Background task for “Download All” episodes
 # ──────────────────────────────────────────────────────────────────────────────
 def download_and_send_all_episodes(chat_id: int, ep_list: list):
-    """
-    Download all episodes in ep_list sequentially, but abort if cancel_events[chat_id] is set.
-    Each episode is handled in the same way as download_and_send_episode, using per-chat cache.
-    """
     cancel_event = cancel_events.get(chat_id)
 
     from hianimez_scraper import extract_episode_stream_and_subtitle
 
-    # Ensure per-chat cache directories exist
     video_cache_dir = os.path.join("videos_cache", str(chat_id))
     subtitle_cache_dir = os.path.join("subtitles_cache", str(chat_id))
     os.makedirs(video_cache_dir, exist_ok=True)
     os.makedirs(subtitle_cache_dir, exist_ok=True)
 
     for ep_num, episode_id in ep_list:
-        # Check for cancellation
         if cancel_event and cancel_event.is_set():
             bot.send_message(chat_id, f"❌ Download‐All cancelled at Episode {ep_num}.")
             return
@@ -777,14 +736,12 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
             bot.send_message(chat_id, f"😔 Episode {ep_num}: No SUB-HD2 stream found. Skipping.")
             continue
 
-        # (b) Download raw MP4
         status_download = bot.send_message(chat_id, f"📥 Downloading Episode {ep_num}...\nProgress: 0%")
         last_dl_update = [0.0]
 
         def download_progress_cb(downloaded_mb, total_duration_s, percent, speed_mb_s, elapsed_s, eta_s):
             if cancel_event and cancel_event.is_set():
                 return
-
             now = time.time()
             if now - last_dl_update[0] < 3.0:
                 return
@@ -827,16 +784,13 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
                 bot.send_message(chat_id, f"❌ Download‐All cancelled during Episode {ep_num}.")
                 return
 
-            # Fallback: send HLS link + subtitles
             bot.send_message(
                 chat_id,
                 f"⚠️ Could not convert Episode {ep_num} to MP4. Here’s the HLS link:\n\n{hls_link}"
             )
             if subtitle_url:
                 try:
-                    local_vtt = download_and_rename_subtitle(
-                        subtitle_url, ep_num, cache_dir=subtitle_cache_dir
-                    )
+                    local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir=subtitle_cache_dir)
                     status_sub = bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt.”")
                     bot.send_document(
                         chat_id=chat_id,
@@ -853,13 +807,11 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
                     bot.send_message(chat_id, f"⚠️ Could not send subtitle for Episode {ep_num}.")
             continue
 
-        # Delete “Downloading Episode…” status (download finished)
         try:
             bot.delete_message(chat_id=chat_id, message_id=status_download.message_id)
         except Exception:
             pass
 
-        # If cancelled before upload, abort
         if cancel_event and cancel_event.is_set():
             bot.send_message(chat_id, f"❌ Download‐All cancelled before uploading Episode {ep_num}.")
             try:
@@ -868,7 +820,6 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
                 pass
             return
 
-        # (c) Upload via Telethon
         status_upload = bot.send_message(chat_id, f"📤 Uploading Episode {ep_num}...\nProgress: 0%")
         try:
             send_file_via_telethon_with_progress(
@@ -884,7 +835,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
             except Exception:
                 pass
 
-            if cancel_event and cancel_event.is_set():
+            if cancel_event and cancel_events[chat_id].is_set():
                 bot.send_message(chat_id, f"❌ Download‐All cancelled during upload of Episode {ep_num}.")
                 try:
                     os.remove(raw_mp4)
@@ -899,9 +850,7 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
                 pass
             if subtitle_url:
                 try:
-                    local_vtt = download_and_rename_subtitle(
-                        subtitle_url, ep_num, cache_dir=subtitle_cache_dir
-                    )
+                    local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir=subtitle_cache_dir)
                     status_sub = bot.send_message(chat_id, f"✅ Subtitle downloaded as “Episode {ep_num}.vtt.”")
                     bot.send_document(
                         chat_id=chat_id,
@@ -918,31 +867,26 @@ def download_and_send_all_episodes(chat_id: int, ep_list: list):
                     bot.send_message(chat_id, f"⚠️ Could not send subtitle for Episode {ep_num}.")
             continue
         finally:
-            # Clean up raw MP4
             try:
                 os.remove(raw_mp4)
             except OSError:
                 pass
 
-        # Delete “Uploading Episode…” status (upload finished)
         try:
             bot.delete_message(chat_id=chat_id, message_id=status_upload.message_id)
         except Exception:
             pass
 
-        # (d) Send subtitle
         if not subtitle_url:
             bot.send_message(chat_id, f"❗ No English subtitle found for Episode {ep_num}.")
             continue
 
-        if cancel_event and cancel_event.is_set():
+        if cancel_event and cancel_events[chat_id].is_set():
             bot.send_message(chat_id, f"❌ Download‐All cancelled before subtitle of Episode {ep_num}.")
             return
 
         try:
-            local_vtt = download_and_rename_subtitle(
-                subtitle_url, ep_num, cache_dir=subtitle_cache_dir
-            )
+            local_vtt = download_and_rename_subtitle(subtitle_url, ep_num, cache_dir=subtitle_cache_dir)
         except Exception as e:
             logger.error(f"[Thread] Error downloading subtitle (Episode {ep_num}): {e}", exc_info=True)
             bot.send_message(chat_id, f"⚠️ Could not download subtitle for Episode {ep_num}.")
@@ -981,17 +925,40 @@ def error_handler(update: object, context: CallbackContext):
             pass
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 14) Main: set up Updater + start polling
+# 14) Main: set up Updater + flood-control patch + start polling
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     updater = Updater(token=BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
 
-    # Define a global `bot` so that helper threads can do bot.send_message(...)
     global bot
     bot = updater.bot
 
-    # Register handlers
+    # ── Flood‐control patch ─────────────────────────────────────────────────
+    _orig_send = bot.send_message
+    def safe_send(*args, **kwargs):
+        try:
+            return _orig_send(*args, **kwargs)
+        except RetryAfter as e:
+            chat = kwargs.get("chat_id") or (args[0] if args else None)
+            if chat:
+                txt = f"⏱️ Too many requests. Try again in {int(e.retry_after)}s."
+                try:
+                    return _orig_send(chat_id=chat, text=txt)
+                except RetryAfter:
+                    pass
+        return None
+    bot.send_message = safe_send
+
+    _orig_edit = bot.edit_message_text
+    def safe_edit(*args, **kwargs):
+        try:
+            return _orig_edit(*args, **kwargs)
+        except RetryAfter:
+            return None
+    bot.edit_message_text = safe_edit
+
+    # ── Register handlers ───────────────────────────────────────────────────
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("search", search_command))
     dp.add_handler(CommandHandler("cancel", cancel_command))
@@ -1000,10 +967,11 @@ if __name__ == "__main__":
     dp.add_handler(CallbackQueryHandler(episodes_all_callback, pattern=r"^episode_all$"))
     dp.add_error_handler(error_handler)
 
-    # Create top‐level cache dirs if they don’t exist
+    # ── Ensure cache dirs exist ─────────────────────────────────────────────
     os.makedirs("subtitles_cache", exist_ok=True)
     os.makedirs("videos_cache", exist_ok=True)
 
-    updater.start_polling()
-    logger.info("Bot started with long polling. Listening for updates…")
+    # ── Start polling (drop old updates) ────────────────────────────────────
+    updater.start_polling(drop_pending_updates=True)
+    logger.info("Bot started with long polling (flood-control patched).")
     updater.idle()
