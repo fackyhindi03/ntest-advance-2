@@ -15,7 +15,8 @@ ANIWATCH_API_BASE = os.getenv(
 def search_anime(query: str):
     """
     Search for anime by name. Returns a list of (title, anime_url, slug).
-    Handles both old & new API formats (under "animes" or "mostPopularAnimes").
+    Works whether the API wraps under `data.animes` or returns
+    at top level under `animes` or `mostPopularAnimes`.
     """
     url = f"{ANIWATCH_API_BASE}/search"
     params = {"q": query, "page": 1}
@@ -26,10 +27,10 @@ def search_anime(query: str):
     full_json = resp.json()
     logger.info("AniWatch /search raw JSON: %s", full_json)
 
-    # 1) Unwrap .data if present
+    # 1) unwrap data if present, else use root
     root = full_json.get("data", full_json)
 
-    # 2) API might return results under "animes" or under "mostPopularAnimes"
+    # 2) try both 'animes' and 'mostPopularAnimes'
     anime_list = root.get("animes")
     if anime_list is None:
         anime_list = root.get("mostPopularAnimes", [])
@@ -58,8 +59,8 @@ def search_anime(query: str):
 
 def get_episodes_list(anime_url: str):
     """
-    Given a hianimez.to/watch/<slug> URL, fetch /anime/<slug>/episodes,
-    return sorted list of (episode_number, episodeId).
+    Fetches /anime/<slug>/episodes and returns a sorted list of
+      [ (episode_number, episodeId), … ]
     """
     try:
         slug = anime_url.rstrip("/").split("/")[-1]
@@ -69,7 +70,6 @@ def get_episodes_list(anime_url: str):
     ep_list_url = f"{ANIWATCH_API_BASE}/anime/{slug}/episodes"
     resp = requests.get(ep_list_url, timeout=10)
 
-    # Fallback single‐episode
     if resp.status_code == 404:
         return [("1", f"{slug}?ep=1")]
 
@@ -92,7 +92,7 @@ def get_episodes_list(anime_url: str):
 def extract_episode_stream_and_subtitle(episode_id: str):
     """
     Given episodeId like "<slug>?ep=1", calls /episode/sources
-    and returns (hls_url, subtitle_url).
+    and returns (hls_link, subtitle_url).
     """
     url = f"{ANIWATCH_API_BASE}/episode/sources"
     params = {
@@ -107,7 +107,7 @@ def extract_episode_stream_and_subtitle(episode_id: str):
     data = resp.json()
     root = data.get("data", data)
 
-    # pick HLS 1080p (hd-2)
+    # pick HLS 1080p
     hls_link = None
     for s in root.get("sources", []):
         if s.get("type") == "hls" and s.get("url"):
