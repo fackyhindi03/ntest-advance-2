@@ -488,7 +488,7 @@ async def telethon_send_with_progress(chat_id: int, file_path: str, caption: str
             file=file_path,
             caption=caption,
             force_document=True,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
             part_size_kb=2048,    # 2 MB chunks instead of 512 KB or 1 MB
             max_connections=16    # up to 16 parallel uploads
         )
