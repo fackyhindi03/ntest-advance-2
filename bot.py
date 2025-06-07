@@ -29,6 +29,7 @@ ALLOWED_USERS = {
     5476335536,
     2096201372,
     633599652,
+    6520490787,
     # Add additional Telegram user IDs here as needed.
 }
 
