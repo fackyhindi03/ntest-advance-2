@@ -62,16 +62,18 @@ def download_and_rename_video(hls_link, ep_num, cache_dir="videos_cache", progre
 
     # ─── 2) Run ffmpeg, whitelisting HLS protocols ───────────────────────────────────────────
     # Using "-progress pipe:1" to get progress info on stdout.
-    cmd_ffmpeg = [
-        "ffmpeg",
-        "-protocol_whitelist", "file,http,https,tcp,tls",
-        "-i", hls_link,
-        "-c", "copy",
-        "-bsf:a", "aac_adtstoasc",   # fix AAC frames if needed
-        "-progress", "pipe:1",
-        "-nostats",
-        output_path
-    ]
+cmd_ffmpeg = [
+    "ffmpeg",
+    "-protocol_whitelist", "file,http,https,tcp,tls",
+    "-threads", "0",            # let ffmpeg auto-detect and use all CPU cores
+    "-http_persistent", "1",    # reuse HTTP connections for HLS segments
+    "-i", hls_link,
+    "-c", "copy",
+    "-bsf:a", "aac_adtstoasc",
+    "-progress", "pipe:1",
+    "-nostats",
+    output_path
+]
 
     proc = subprocess.Popen(
         cmd_ffmpeg,
